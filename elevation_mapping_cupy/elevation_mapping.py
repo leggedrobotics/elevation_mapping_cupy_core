@@ -26,9 +26,11 @@ from elevation_mapping_cupy.kernels import average_map_kernel
 from elevation_mapping_cupy.kernels import dilation_filter_kernel
 from elevation_mapping_cupy.kernels import normal_filter_kernel
 from elevation_mapping_cupy.kernels import polygon_mask_kernel
+from elevation_mapping_cupy.kernels import image_to_map_correspondence_kernel
 
 from elevation_mapping_cupy.map_initializer import MapInitializer
 from elevation_mapping_cupy.plugins.plugin_manager import PluginManager
+from elevation_mapping_cupy.semantic_map import SemanticMap
 from elevation_mapping_cupy.traversability_polygon import (
     get_masked_traversability,
     is_traversable,
@@ -107,6 +109,7 @@ class ElevationMap:
         self.cell_n = param.cell_n
 
         self.map_lock = threading.Lock()
+        self.semantic_map = SemanticMap(self.param)
         self.elevation_map = xp.zeros((7, self.cell_n, self.cell_n), dtype=self.data_type)
         self.layer_names = [
             "elevation",
@@ -137,6 +140,28 @@ class ElevationMap:
         self.additive_mean_error = 0.0
 
         self.compile_kernels()
+        self.compile_image_kernels()
+
+        # Pre-register semantic layers from configured subscriber channels so that
+        # callers can request layers (e.g. "rgb") before any data has arrived.
+        for cfg in self.param.subscriber_cfg.values():
+            cfg_channels = cfg.get("channels", [])
+            if not cfg_channels:
+                continue
+            if cfg.get("data_type") == "image":
+                process_channels, _ = self.semantic_map.get_fusion(
+                    cfg_channels, self.param.image_channel_fusions, self.semantic_map.layer_specs_image
+                )
+            else:
+                process_channels, _ = self.semantic_map.get_fusion(
+                    cfg_channels,
+                    self.param.pointcloud_channel_fusions,
+                    self.semantic_map.layer_specs_points,
+                )
+            for ch in process_channels:
+                self.semantic_map.add_layer(ch)
+
+        self.semantic_map.initialize_fusion()
 
         # No shell substitutions in research code: param.weight_file is expected to be a real path.
         param.load_weights(param.weight_file)
@@ -159,9 +184,14 @@ class ElevationMap:
             self.elevation_map *= 0.0
             # Initial variance
             self.elevation_map[1] += self.initial_variance
+            self.semantic_map.clear()
 
         self.mean_error = 0.0
         self.additive_mean_error = 0.0
+
+    def get_position(self, position):
+        """Backward-compatible alias for getting the map center position."""
+        return self.get_center_position(position)
 
     def get_center_position(self, position):
         """Return the position of the map center.
@@ -256,6 +286,7 @@ class ElevationMap:
             self.pad_value(self.elevation_map, shift_value, idx=1, value=self.initial_variance)
             # Plugin layers are computed on-demand; invalidate cache when shifting.
             self.plugin_manager.reset_layers()
+            self.semantic_map.shift_map_xy(shift_value)
 
     def shift_map_z(self, delta_z):
         """Shift the relevant layers along the vertical axis.
@@ -325,6 +356,26 @@ class ElevationMap:
         )
         self.polygon_mask_kernel = polygon_mask_kernel(self.cell_n, self.cell_n, self.resolution)
         self.normal_filter_kernel = normal_filter_kernel(self.cell_n, self.cell_n, self.resolution)
+
+    def compile_image_kernels(self):
+        """Compile kernels and buffers related to processing image messages."""
+        for config in self.param.subscriber_cfg.values():
+            if config.get("data_type") == "image":
+                self.valid_correspondence = cp.asarray(
+                    np.zeros((self.cell_n, self.cell_n), dtype=np.bool_), dtype=np.bool_
+                )
+                self.uv_correspondence = cp.asarray(
+                    np.zeros((2, self.cell_n, self.cell_n), dtype=np.float32),
+                    dtype=np.float32,
+                )
+                # TODO: expose tolerance_z_collision as a parameter
+                self.image_to_map_correspondence_kernel = image_to_map_correspondence_kernel(
+                    resolution=self.resolution,
+                    width=self.cell_n,
+                    height=self.cell_n,
+                    tolerance_z_collision=0.10,
+                )
+                break
 
     def shift_translation_to_map_center(self, t):
         """Deduct the map center to get the translation of a point w.r.t. the map center.
@@ -397,6 +448,9 @@ class ElevationMap:
             # Log after adding points
 
             self.average_map_kernel(self.new_map, self.elevation_map, size=(self.cell_n * self.cell_n))
+
+            # Update semantic layers (pointcloud fusion) if enabled via subscriber_cfg.
+            self.semantic_map.update_layers_pointcloud(points_all, channels, R, t, self.new_map)
 
             if self.param.enable_overlap_clearance:
                 self.clear_overlap_map(t)
@@ -499,11 +553,105 @@ class ElevationMap:
             orientation_noise,
         )
 
-    def input_image(self, *args, **kwargs):
-        raise NotImplementedError(
-            "Image input was removed from the supported surface of this repo. "
-            "Use pointcloud input only."
-        )
+    def input_image(
+        self,
+        image: List[cp._core.core.ndarray],
+        channels: List[str],
+        R: cp._core.core.ndarray,
+        t: cp._core.core.ndarray,
+        K: cp._core.core.ndarray,
+        D: cp._core.core.ndarray,
+        distortion_model: str,
+        image_height: int,
+        image_width: int,
+    ):
+        """Input image and fuse the new measurements to update semantic layers.
+
+        Args:
+            image: List of per-channel image arrays
+            channels: List of channel names for the image
+            R: Camera rotation
+            t: Camera translation
+            K: Camera intrinsics
+            D: Distortion coefficients
+            distortion_model: Distortion model string
+            image_height: Image height
+            image_width: Image width
+        """
+        if not hasattr(self, "image_to_map_correspondence_kernel"):
+            raise RuntimeError(
+                "Image kernels not compiled. Set at least one subscriber_cfg entry with data_type='image' "
+                "and re-initialize ElevationMap."
+            )
+
+        image = np.stack(image, axis=0)
+        if len(image.shape) == 2:
+            image = image[None]
+
+        image = cp.asarray(image, dtype=self.data_type)
+        K = cp.asarray(K, dtype=self.data_type)
+        R = cp.asarray(R, dtype=self.data_type)
+        t = cp.asarray(t, dtype=self.data_type)
+        D = cp.asarray(D, dtype=self.data_type)
+        image_height = cp.float32(image_height)
+        image_width = cp.float32(image_width)
+
+        if len(D) < 4:
+            D = cp.zeros(5, dtype=self.data_type)
+        elif len(D) == 4:
+            D = cp.concatenate([D, cp.zeros(1, dtype=self.data_type)])
+        else:
+            D = D[:5]
+
+        if distortion_model == "radtan":
+            pass
+        elif distortion_model == "equidistant":
+            # Not implemented yet.
+            D *= 0
+        elif distortion_model == "plumb_bob":
+            # Not implemented yet.
+            D *= 0
+        else:
+            # Not implemented yet.
+            D *= 0
+
+        # Calculate transformation matrix
+        P = cp.asarray(K @ cp.concatenate([R, t[:, None]], 1), dtype=np.float32)
+        t_cam_map = -R.T @ t - self.center
+        t_cam_map = t_cam_map.get()
+        x1 = cp.uint32((self.cell_n / 2) + ((t_cam_map[0]) / self.resolution))
+        y1 = cp.uint32((self.cell_n / 2) + ((t_cam_map[1]) / self.resolution))
+        z1 = cp.float32(t_cam_map[2])
+
+        self.uv_correspondence *= 0
+        self.valid_correspondence[:, :] = False
+
+        with self.map_lock:
+            self.image_to_map_correspondence_kernel(
+                self.elevation_map,
+                x1,
+                y1,
+                z1,
+                P.reshape(-1),
+                K.reshape(-1),
+                D.reshape(-1),
+                image_height,
+                image_width,
+                self.center,
+                self.uv_correspondence,
+                self.valid_correspondence,
+                size=int(self.cell_n * self.cell_n),
+            )
+
+            self.semantic_map.update_layers_image(
+                image,
+                channels,
+                self.uv_correspondence,
+                self.valid_correspondence,
+                image_height,
+                image_width,
+            )
+
 
     def update_normal(self, dilated_map):
         """Clear the normal map and then apply the normal kernel with dilated map as input.
@@ -654,6 +802,8 @@ class ElevationMap:
         """
         if name in self.layer_names:
             return True
+        elif name in self.semantic_map.layer_names:
+            return True
         elif name in self.plugin_manager.layer_names:
             return True
         else:
@@ -691,19 +841,24 @@ class ElevationMap:
                 m = self.normal_map.copy()[1, 1:-1, 1:-1]
             elif name == "normal_z":
                 m = self.normal_map.copy()[2, 1:-1, 1:-1]
+            elif name in self.semantic_map.layer_names:
+                m = self.semantic_map.get_map_with_name(name)
             elif name in self.plugin_manager.layer_names:
                 self.plugin_manager.update_with_name(
                     name,
                     self.elevation_map,
                     self.layer_names,
+                    semantic_map=self.semantic_map.semantic_map,
+                    semantic_params=self.semantic_map.layer_names,
                     rotation=self.base_rotation,
+                    elements_to_shift=self.semantic_map.elements_to_shift,
                 )
                 m = self.plugin_manager.get_map_with_name(name)
                 p = self.plugin_manager.get_param_with_name(name)
                 xp = self.xp_of_array(m)
                 m = self.process_map_for_publish(m, fill_nan=p.fill_nan, add_z=p.is_height_layer, xp=xp)
             else:
-                raise KeyError(f"Layer '{name}' is not in the map.")
+                raise KeyError(f"Layer '{name}' is not in the map")
         # Transform to align elevation_mapping_cupy with grid_map coordinate convention.
         #
         # elevation_mapping_cupy uses Row=Y, Col=X (see kernels/custom_kernels.py:35)

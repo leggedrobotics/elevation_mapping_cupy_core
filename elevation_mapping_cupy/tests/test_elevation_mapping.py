@@ -3,6 +3,7 @@ from elevation_mapping_cupy import parameter, elevation_mapping
 import cupy as cp
 import numpy as np
 from pathlib import Path
+import warnings
 
 
 def encode_max(maxim, index):
@@ -28,6 +29,11 @@ def elmap_ex(add_lay, fusion_alg):
     )
     p.subscriber_cfg["front_cam"]["channels"] = additional_layer
     p.subscriber_cfg["front_cam"]["fusion"] = fusion_algorithms
+    # Set data_type to "image" if "rgb" is in channels, otherwise "pointcloud"
+    if "rgb" in additional_layer:
+        p.subscriber_cfg["front_cam"]["data_type"] = "image"
+    else:
+        p.subscriber_cfg["front_cam"]["data_type"] = "pointcloud"
     p.update()
     e = elevation_mapping.ElevationMap(p)
     return e
@@ -71,18 +77,18 @@ class TestElevationMap:
             elmap_ex.move_to(pos, R)
 
     def test_get_map(self, elmap_ex):
-        layers = [
-            "elevation",
-            "variance",
-            "traversability",
-            "min_filter",
-            "smooth",
-            "inpaint",
-            "rgb",
-        ]
+        # Get all available layers dynamically from the elevation map instance
+        layers = (
+            list(elmap_ex.layer_names) +
+            list(elmap_ex.semantic_map.layer_names) +
+            list(elmap_ex.plugin_manager.layer_names)
+        )
         data = np.zeros((elmap_ex.cell_n - 2, elmap_ex.cell_n - 2), dtype=cp.float32)
         for layer in layers:
-            elmap_ex.get_map_with_name_ref(layer, data)
+            if elmap_ex.exists_layer(layer):
+                elmap_ex.get_map_with_name_ref(layer, data)
+            else:
+                warnings.warn(f"Layer '{layer}' does not exist in the map", UserWarning)
 
     def test_get_position(self, elmap_ex):
         pos = np.random.rand(1, 3)
