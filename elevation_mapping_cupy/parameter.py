@@ -202,6 +202,7 @@ class Parameter(Serializable):
     use_chainer: bool = True  # use chainer as a backend of traversability filter or pytorch. If false, it uses pytorch. pytorch requires ~2GB more GPU memory compared to chainer but runs faster.
     position_noise_thresh: float = 0.1  # if the position change is bigger than this value, the drift compensation happens.
     orientation_noise_thresh: float = 0.1  # if the orientation change is bigger than this value, the drift compensation happens.
+    confidence_fusion_threshold: float = 0.5  # only fuse pixels with confidence >= this value (0.0-1.0). 0.0 disables filtering.
 
     plugin_config_file: str = "config/plugin_config.yaml"  # configuration file for the plugin
     weight_file: str = "config/weights.dat"  # weight file for traversability filter

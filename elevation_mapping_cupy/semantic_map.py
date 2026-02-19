@@ -5,7 +5,7 @@
 from elevation_mapping_cupy.parameter import Parameter
 import cupy as cp
 import numpy as np
-from typing import List, Dict
+from typing import List, Dict, Optional
 import re
 
 
@@ -263,17 +263,20 @@ class SemanticMap:
         # sub_key: str,
         image: cp._core.core.ndarray,
         channels: List[str],
+        confidence: Optional[cp._core.core.ndarray] = None,
         # fusion_methods: List[str],
-        uv_correspondence: cp._core.core.ndarray,
-        valid_correspondence: cp._core.core.ndarray,
-        image_height: cp._core.core.ndarray,
-        image_width: cp._core.core.ndarray,
+        uv_correspondence: cp._core.core.ndarray = None,
+        valid_correspondence: cp._core.core.ndarray = None,
+        image_height: cp._core.core.ndarray = None,
+        image_width: cp._core.core.ndarray = None,
     ):
         """Update the semantic map with the new image.
 
         Args:
             sub_key:
             image:
+            channels:
+            confidence: Per-pixel confidence map (1, H, W), optional
             uv_correspondence:
             valid_correspondence:
             image_height:
@@ -299,6 +302,7 @@ class SemanticMap:
                 fusion,
                 cp.uint64(sem_map_idx),
                 image,
+                confidence,
                 j,
                 uv_correspondence,
                 valid_correspondence,

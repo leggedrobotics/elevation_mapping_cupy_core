@@ -555,28 +555,30 @@ class ElevationMap:
 
     def input_image(
         self,
-        image: List[cp._core.core.ndarray],
+        image: cp.ndarray,  # (D, H, W) CuPy array
         channels: List[str],
-        R: cp._core.core.ndarray,
-        t: cp._core.core.ndarray,
-        K: cp._core.core.ndarray,
-        D: cp._core.core.ndarray,
-        distortion_model: str,
-        image_height: int,
-        image_width: int,
+        confidence: Optional[cp.ndarray] = None,  # (1, H, W) CuPy array, per-pixel confidence
+        R: cp._core.core.ndarray = None,
+        t: cp._core.core.ndarray = None,
+        K: cp._core.core.ndarray = None,
+        D: cp._core.core.ndarray = None,
+        distortion_model: str = "radtan",
+        image_height: int = None,
+        image_width: int = None,
     ):
         """Input image and fuse the new measurements to update semantic layers.
 
         Args:
-            image: List of per-channel image arrays
-            channels: List of channel names for the image
-            R: Camera rotation
-            t: Camera translation
-            K: Camera intrinsics
-            D: Distortion coefficients
-            distortion_model: Distortion model string
-            image_height: Image height
-            image_width: Image width
+            image (cp.ndarray): (D, H, W) CuPy array of image channels.
+            channels (List[str]): List of channel names for the image
+            confidence (cp.ndarray, optional): (1, H, W) CuPy array, per-pixel confidence
+            R (cupy._core.core.ndarray): Camera rotation
+            t (cupy._core.core.ndarray): Camera translation
+            K (cupy._core.core.ndarray): Camera intrinsics
+            D (cupy._core.core.ndarray): Distortion coefficients
+            distortion_model (str): Distortion model string
+            image_height (int): Image height
+            image_width (int): Image width
         """
         if not hasattr(self, "image_to_map_correspondence_kernel"):
             raise RuntimeError(
@@ -584,11 +586,10 @@ class ElevationMap:
                 "and re-initialize ElevationMap."
             )
 
-        image = np.stack(image, axis=0)
-        if len(image.shape) == 2:
-            image = image[None]
-
-        image = cp.asarray(image, dtype=self.data_type)
+        assert isinstance(image, cp.ndarray), "image must be a CuPy array"
+        assert image.ndim == 3, "image must have shape (D, H, W)"
+        # image is already on GPU and correctly shaped
+        image = image.astype(self.data_type)
         K = cp.asarray(K, dtype=self.data_type)
         R = cp.asarray(R, dtype=self.data_type)
         t = cp.asarray(t, dtype=self.data_type)
@@ -619,9 +620,9 @@ class ElevationMap:
         P = cp.asarray(K @ cp.concatenate([R, t[:, None]], 1), dtype=np.float32)
         t_cam_map = -R.T @ t - self.center
         t_cam_map = t_cam_map.get()
-        x1 = cp.uint32((self.cell_n / 2) + ((t_cam_map[0]) / self.resolution))
-        y1 = cp.uint32((self.cell_n / 2) + ((t_cam_map[1]) / self.resolution))
-        z1 = cp.float32(t_cam_map[2])
+        x1 = ((self.cell_n / 2) + (t_cam_map[0] / self.resolution)).astype(cp.uint32)
+        y1 = ((self.cell_n / 2) + (t_cam_map[1] / self.resolution)).astype(cp.uint32)
+        z1 = t_cam_map[2].astype(cp.float32)  # z1 is now a 0-dim CuPy array
 
         self.uv_correspondence *= 0
         self.valid_correspondence[:, :] = False
@@ -642,10 +643,10 @@ class ElevationMap:
                 self.valid_correspondence,
                 size=int(self.cell_n * self.cell_n),
             )
-
             self.semantic_map.update_layers_image(
                 image,
                 channels,
+                confidence,
                 self.uv_correspondence,
                 self.valid_correspondence,
                 image_height,

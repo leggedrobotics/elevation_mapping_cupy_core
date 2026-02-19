@@ -84,6 +84,7 @@ class FusionManager(object):
         name: str,
         sem_map_idx,
         image,
+        confidence,
         j,
         uv_correspondence,
         valid_correspondence,
@@ -100,6 +101,7 @@ class FusionManager(object):
             self.plugins[idx](
                 sem_map_idx,
                 image,
+                confidence,
                 j,
                 uv_correspondence,
                 valid_correspondence,

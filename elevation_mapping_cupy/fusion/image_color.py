@@ -64,6 +64,7 @@ class ImageColor(FusionBase):
         self,
         sem_map_idx,
         image,
+        confidence,
         j,
         uv_correspondence,
         valid_correspondence,
@@ -72,6 +73,7 @@ class ImageColor(FusionBase):
         semantic_map,
         new_map,
     ):
+        # Note: confidence parameter is accepted for API compatibility but not used in color fusion
         self.color_correspondences_to_map_kernel(
             semantic_map,
             cp.uint64(sem_map_idx),
