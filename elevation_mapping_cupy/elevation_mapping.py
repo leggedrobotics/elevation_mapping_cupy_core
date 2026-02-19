@@ -810,13 +810,16 @@ class ElevationMap:
         else:
             return False
 
-    def get_map_with_name_ref(self, name, data):
+    def get_map_with_name_ref(self, name, data=None, return_cupy=False):
         """Load a layer according to the name input to the data input.
 
         Args:
             name (str): Name of the layer.
-            data (numpy.ndarray): Data structure that contains layer.
+            data (numpy.ndarray, optional): Data structure that contains layer. Required if return_cupy=False.
+            return_cupy (bool): If True, return CuPy array directly instead of copying to CPU. Default: False.
 
+        Returns:
+            cupy.ndarray or None: If return_cupy=True, returns the CuPy array. Otherwise returns None.
         """
         use_stream = True
         xp = cp
@@ -877,11 +880,18 @@ class ElevationMap:
         # m = xp.flip(m, 0)
         # m = xp.flip(m, 1)
         m = self._transform_to_grid_map_coordinate_convention(m)
-        if use_stream:
-            stream = cp.cuda.Stream(non_blocking=False)
+        
+        if return_cupy:
+            # Return CuPy array directly (no CPU transfer)
+            return m if isinstance(m, cp.ndarray) else cp.asarray(m)
         else:
-            stream = None
-        self.copy_to_cpu(m, data, stream=stream)
+            # Original behavior: copy to CPU
+            if use_stream:
+                stream = cp.cuda.Stream(non_blocking=False)
+            else:
+                stream = None
+            self.copy_to_cpu(m, data, stream=stream)
+            return None
 
     def _transform_to_grid_map_coordinate_convention(self, m):
         """Transform the map to the grid_map coordinate convention.
@@ -895,6 +905,7 @@ class ElevationMap:
            3. Flip axis 1: so increasing col → decreasing Y (matching grid_map's -Y)
 
         This is equivalent to: rot90(m.T, k=2) or flip(flip(m.T, 0), 1)
+        Using rot90 is more efficient (single operation vs 3 operations).
 
         Args:
             m (cupy._core.core.ndarray):
@@ -902,22 +913,15 @@ class ElevationMap:
         Returns:
             cupy._core.core.ndarray:
         """
-        m = m.T
-        m = xp.flip(m, 0)
-        m = xp.flip(m, 1)
-        return m
+        # Optimized: single rot90 operation instead of transpose + 2 flips
+        # This reduces intermediate array allocations
+        return xp.rot90(m.T, k=2)
 
     def _transform_to_elevation_mapping_coordinate_convention(self, m):
-        """Transform the map to the grid_map coordinate convention.
+        """Transform from grid_map coordinate convention back to elevation_mapping_cupy convention.
 
-        elevation_mapping_cupy uses Row=Y, Col=X (see kernels/custom_kernels.py:35)
-        grid_map uses Row→-X, Col→-Y (see grid_map_core/src/GridMapMath.cpp:64-67
-        transformBufferOrderToMapFrame returns {-index[0], -index[1]})
-        To transform back to a normal array, we need to apply the inverse transformation:
-        Flip axis 0: so increasing row → decreasing X (matching grid_map's -X)
-        Flip axis 1: so increasing col → decreasing Y (matching grid_map's -Y)
-        Transpose: swap axes so Row=X, Col=Y (matching grid_map's axis assignment)
-        This is equivalent to: flip(flip(m, 0), 1).T
+        This is the inverse of _transform_to_grid_map_coordinate_convention.
+        Inverse of rot90(m.T, k=2) is rot90(m, k=-2).T or rot90(m, k=2).T
 
         Args:
             m (cupy._core.core.ndarray):
@@ -925,10 +929,9 @@ class ElevationMap:
         Returns:
             cupy._core.core.ndarray:
         """
-        m = xp.flip(m, 0)
-        m = xp.flip(m, 1)
-        m = m.T
-        return m
+        # Optimized: single rot90 operation instead of 2 flips + transpose
+        # Inverse of rot90(m.T, k=2) is rot90(m, k=2).T
+        return xp.rot90(m, k=2).T
 
     def get_normal_maps(self):
         """Get the normal maps.
