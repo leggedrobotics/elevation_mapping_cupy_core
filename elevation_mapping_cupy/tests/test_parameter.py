@@ -4,13 +4,12 @@ from pathlib import Path
 
 
 def test_parameter():
-    # .../elevation_mapping_cupy/elevation_mapping_cupy/elevation_mapping_cupy/tests/test_parameter.py
-    # parents[2] = ROS package root (contains config/).
-    root = Path(__file__).resolve().parents[2]
+    # Config files are in the package configs directory
+    config_dir = Path(__file__).parent.parent / "configs"
     param = Parameter(
         use_chainer=False,
-        weight_file=str(root / "config" / "core" / "weights.dat"),
-        plugin_config_file=str(root / "config" / "core" / "plugin_config.yaml"),
+        weight_file=str(config_dir / "weights.dat"),
+        plugin_config_file=str(config_dir / "plugin_config.yaml"),
     )
     res = param.resolution
     param.set_value("resolution", 0.1)

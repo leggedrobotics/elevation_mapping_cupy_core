@@ -16,7 +16,7 @@ from elevation_mapping_cupy import parameter, elevation_mapping
 
 # Get absolute paths to config files
 _TEST_DIR = Path(__file__).parent
-_CONFIG_DIR = _TEST_DIR.parent.parent / "config" / "core"
+_CONFIG_DIR = _TEST_DIR.parent / "configs"
 
 
 @pytest.fixture

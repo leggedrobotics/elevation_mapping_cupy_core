@@ -2,6 +2,7 @@ import pytest
 from elevation_mapping_cupy import parameter, elevation_mapping
 import cupy as cp
 import numpy as np
+from pathlib import Path
 
 
 def encode_max(maxim, index):
@@ -22,8 +23,8 @@ def elmap_ex(add_lay, fusion_alg):
     fusion_algorithms = fusion_alg
     p = parameter.Parameter(
         use_chainer=False,
-        weight_file="../../../config/weights.dat",
-        plugin_config_file="../../../config/plugin_config.yaml",
+        weight_file=str(Path(__file__).parent.parent / "configs" / "weights.dat"),
+        plugin_config_file=str(Path(__file__).parent.parent / "configs" / "plugin_config.yaml"),
     )
     p.subscriber_cfg["front_cam"]["channels"] = additional_layer
     p.subscriber_cfg["front_cam"]["fusion"] = fusion_algorithms

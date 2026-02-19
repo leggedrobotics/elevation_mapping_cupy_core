@@ -6,11 +6,11 @@ from elevation_mapping_cupy.elevation_mapping import GridGeometry
 
 
 def make_map(resolution=0.2, length=1.0):
-    root = Path(__file__).resolve().parents[2]
+    config_dir = Path(__file__).parent.parent / "configs"
     param = parameter.Parameter(
         use_chainer=False,
-        weight_file=str(root / "config/core/weights.dat"),
-        plugin_config_file=str(root / "config/core/plugin_config.yaml"),
+        weight_file=str(config_dir / "weights.dat"),
+        plugin_config_file=str(config_dir / "plugin_config.yaml"),
     )
     param.resolution = resolution
     param.map_length = length

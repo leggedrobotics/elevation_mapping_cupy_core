@@ -15,13 +15,12 @@ def test_cupy_cuda_is_available():
 
 
 def test_kernels_compile_and_one_update_step_runs():
-    # .../elevation_mapping_cupy/elevation_mapping_cupy/elevation_mapping_cupy/tests/test_kernel_compile_smoke.py
-    # parents[2] = ROS package root (contains config/).
-    root = Path(__file__).resolve().parents[2]
+    # Config files are in the package configs directory
+    config_dir = Path(__file__).parent.parent / "configs"
     p = Parameter(
         use_chainer=False,
-        weight_file=str(root / "config" / "core" / "weights.dat"),
-        plugin_config_file=str(root / "config" / "core" / "plugin_config.yaml"),
+        weight_file=str(config_dir / "weights.dat"),
+        plugin_config_file=str(config_dir / "plugin_config.yaml"),
     )
 
     # Keep map tiny so the smoke test stays fast.
