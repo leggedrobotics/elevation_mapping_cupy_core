@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.so
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE / tooling
+.idea/
+.vscode/
+

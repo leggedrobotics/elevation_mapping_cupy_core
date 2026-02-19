@@ -1,0 +1,24 @@
+[project]
+name = "elevation_mapping_cupy_core"
+version = "0.1.0"
+description = "Core CuPy-based elevation mapping library extracted from elevation_mapping_cupy."
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Deepana Ishtaweera", email = "deepan@leggedrobotcs.com" },
+]
+dependencies = [
+]
+
+[project.urls]
+Homepage = "https://github.com/leggedrobotics/elevation_mapping_cupy"
+Source = "https://github.com/leggedrobotics/elevation_mapping_cupy_core"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["elevation_mapping_cupy*",]
+
