@@ -3,7 +3,7 @@ name = "elevation_mapping_cupy_core"
 version = "0.1.0"
 description = "Core CuPy-based elevation mapping library extracted from elevation_mapping_cupy."
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
   { name = "Deepana Ishtaweera", email = "deepan@leggedrobotcs.com" },
 ]
