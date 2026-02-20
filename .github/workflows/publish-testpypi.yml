@@ -1,0 +1,51 @@
+name: Publish to TestPyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.1.0)'
+        required: true
+        type: string
+
+jobs:
+  publish-testpypi:
+    name: Build and publish to TestPyPI
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        version: "latest"
+    
+    - name: Set up Python
+      run: |
+        uv python install 3.10
+        uv python pin 3.10
+    
+    - name: Update version in pyproject.toml
+      run: |
+        # Update version if provided via workflow_dispatch
+        if [ -n "${{ github.event.inputs.version }}" ]; then
+          uv run python -c "
+          import re
+          with open('pyproject.toml', 'r') as f:
+              content = f.read()
+          content = re.sub(r'version = \"[^\"]+\"', 'version = \"${{ github.event.inputs.version }}\"', content)
+          with open('pyproject.toml', 'w') as f:
+              f.write(content)
+          "
+        fi
+    
+    - name: Build package
+      run: |
+        uv build
+    
+    - name: Publish to TestPyPI
+      run: |
+        uv publish --publish-url https://test.pypi.org/legacy/ --token ${{ secrets.TEST_PYPI_API_TOKEN }}

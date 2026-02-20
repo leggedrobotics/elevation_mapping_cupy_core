@@ -32,3 +32,19 @@ include = ["elevation_mapping_cupy*",]
 [tool.setuptools.package-data]
 elevation_mapping_cupy = ["configs/*"]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[tool.pytest.ini_options]
+# Pytest configuration
+# Note: colcon-core plugin may appear if installed in ROS workspace environment,
+# but it's not a dependency of this package and won't affect PyPI installations.
+testpaths = ["elevation_mapping_cupy/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
