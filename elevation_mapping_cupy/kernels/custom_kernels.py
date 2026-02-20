@@ -32,16 +32,11 @@ def map_utils(
             return i;
         }
         __device__ bool is_inside(int idx) {
-            // Fixed: Row-Major (Row=Y, Col=X)
-            // Row index (Y)
-            int idx_y = idx / ${width};
-            // Column index (X)
-            int idx_x = idx % ${width};
-            // Check Col bounds (Width)
+            int idx_x = idx / ${width};
+            int idx_y = idx % ${width};
             if (idx_x == 0 || idx_x == ${width} - 1) {
                 return false;
             }
-            // Check Row bounds (Height)
             if (idx_y == 0 || idx_y == ${height} - 1) {
                 return false;
             }
@@ -50,8 +45,7 @@ def map_utils(
         __device__ int get_idx(float16 x, float16 y, float16 center_x, float16 center_y) {
             int idx_x = clamp(get_x_idx(x, center_x), 0, ${width} - 1);
             int idx_y = clamp(get_y_idx(y, center_y), 0, ${height} - 1);
-            // Fixed: Row-Major (Row=Y, Col=X)
-            return ${width} * idx_y + idx_x;
+            return ${width} * idx_x + idx_y;
         }
         __device__ int get_map_idx(int idx, int layer_n) {
             const int layer = ${width} * ${height};
@@ -417,16 +411,11 @@ def dilation_filter_kernel(width, height, dilation_size):
                 return layer * layer_n + relative_idx;
             }
             __device__ bool is_inside(int idx) {
-                // Fixed: Row-Major (Row=Y, Col=X)
-                // Row index (Y)
-                int idx_y = idx / ${width};
-                // Column index (X)
-                int idx_x = idx % ${width};
-                // Check Col bounds (Width)
+                int idx_x = idx / ${width};
+                int idx_y = idx % ${width};
                 if (idx_x <= 0 || idx_x >= ${width} - 1) {
                     return false;
                 }
-                // Check Row bounds (Height)
                 if (idx_y <= 0 || idx_y >= ${height} - 1) {
                     return false;
                 }
@@ -482,16 +471,11 @@ def normal_filter_kernel(width, height, resolution):
                 return layer * layer_n + relative_idx;
             }
             __device__ bool is_inside(int idx) {
-                // Fixed: Row-Major (Row=Y, Col=X)
-                // Row index (Y)
-                int idx_y = idx / ${width};
-                // Column index (X)
-                int idx_x = idx % ${width};
-                // Check Col bounds (Width)
+                int idx_x = idx / ${width};
+                int idx_y = idx % ${width};
                 if (idx_x <= 0 || idx_x >= ${width} - 1) {
                     return false;
                 }
-                // Check Row bounds (Height)
                 if (idx_y <= 0 || idx_y >= ${height} - 1) {
                     return false;
                 }
@@ -512,9 +496,8 @@ def normal_filter_kernel(width, height, resolution):
                 if (!is_inside(idx_x) || !is_inside(idx_y)) { return; }
                 float dzdx = (map[idx_x] - h);
                 float dzdy = (map[idx_y] - h);
-                // Fixed: Normal = (-dH/dx, -dH/dy, 1)
-                float nx = -dzdx / resolution();
-                float ny = -dzdy / resolution();
+                float nx = -dzdy / resolution();
+                float ny = -dzdx / resolution();
                 float nz = 1;
                 float norm = sqrt((nx * nx) + (ny * ny) + 1);
                 newmap[get_map_idx(i, 0)] = nx / norm;
@@ -590,14 +573,12 @@ def polygon_mask_kernel(width, height, resolution):
             }
 
             __device__ int get_idx_x(int idx){
-                // Fixed: Column index (X)
-                int idx_x = idx % ${width};
+                int idx_x = idx / ${width};
                 return idx_x;
             }
 
             __device__ int get_idx_y(int idx){
-                // Fixed: Row index (Y)
-                int idx_y = idx / ${width};
+                int idx_y = idx % ${width};
                 return idx_y;
             }
 
@@ -623,8 +604,7 @@ def polygon_mask_kernel(width, height, resolution):
             __device__ int get_idx(float16 x, float16 y, float16 center_x, float16 center_y) {
                 int idx_x = clamp(get_x_idx(x, center_x), 0, ${width} - 1);
                 int idx_y = clamp(get_y_idx(y, center_y), 0, ${height} - 1);
-                // Fixed: Row-Major (Row=Y, Col=X)
-                return ${width} * idx_y + idx_x;
+                return ${width} * idx_x + idx_y;
             }
 
             """

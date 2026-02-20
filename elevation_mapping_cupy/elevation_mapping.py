@@ -163,13 +163,26 @@ class ElevationMap:
 
         self.semantic_map.initialize_fusion()
 
-        # No shell substitutions in research code: param.weight_file is expected to be a real path.
-        param.load_weights(param.weight_file)
-
-        if param.use_chainer:
-            self.traversability_filter = get_filter_chainer(param.w1, param.w2, param.w3, param.w_out)
+        # Load weights only if weight_file exists and is not empty
+        # Traversability filter is optional - only needed if weights are available
+        self.traversability_filter = None
+        if param.weight_file and param.weight_file.strip() and os.path.exists(param.weight_file):
+            try:
+                param.load_weights(param.weight_file)
+                if param.use_chainer:
+                    self.traversability_filter = get_filter_chainer(param.w1, param.w2, param.w3, param.w_out)
+                else:
+                    self.traversability_filter = get_filter_torch(param.w1, param.w2, param.w3, param.w_out)
+                print(f"[ElevationMap] Traversability filter enabled (weights loaded from {param.weight_file})")
+            except Exception as e:
+                print(f"[ElevationMap] Warning: Failed to load weights from {param.weight_file}: {e}")
+                print(f"[ElevationMap] Traversability filter will be disabled")
+                self.traversability_filter = None
         else:
-            self.traversability_filter = get_filter_torch(param.w1, param.w2, param.w3, param.w_out)
+            if param.weight_file and param.weight_file.strip():
+                print(f"[ElevationMap] Weight file not found: {param.weight_file}")
+            # Weight file is empty or not set - traversability filter disabled (not needed for semantic-based traversability)
+        
         self.untraversable_polygon = xp.zeros((1, 2))
 
         # Plugins
@@ -267,17 +280,10 @@ class ElevationMap:
         """Shift the map along the horizontal axes according to the input.
 
         Args:
-            delta_pixel (cupy._core.core.ndarray): Shift in [x, y] order (world coordinates).
-                x corresponds to columns (axis 2), y corresponds to rows (axis 1).
+            delta_pixel (cupy._core.core.ndarray):
 
-        Note:
-            The map array has shape (layers, height, width) = (layers, rows, cols).
-            In row-major convention: axis 1 = rows = Y, axis 2 = cols = X.
-            cp.roll with axis=(1, 2) expects [row_shift, col_shift] = [y_shift, x_shift].
-            Since delta_pixel is [x, y], we swap to [y, x] for correct axis mapping.
         """
-        # Swap [x, y] to [y, x] to match axis=(1, 2) = (rows=Y, cols=X)
-        shift_value = cp.array([delta_pixel[1], delta_pixel[0]], dtype=cp.int32)
+        shift_value = delta_pixel.astype(cp.int32)
         if cp.abs(shift_value).sum() == 0:
             return
         with self.map_lock:
@@ -455,19 +461,21 @@ class ElevationMap:
             if self.param.enable_overlap_clearance:
                 self.clear_overlap_map(t)
 
-            self.traversability_input *= 0.0
-            self.dilation_filter_kernel(
-                self.elevation_map[5],
-                self.elevation_map[2] + self.elevation_map[6],
-                self.traversability_input,
-                self.traversability_mask_dummy,
-                size=(self.cell_n * self.cell_n),
-            )
+            # Only update traversability if filter is available (weights loaded)
+            if self.traversability_filter is not None:
+                self.traversability_input *= 0.0
+                self.dilation_filter_kernel(
+                    self.elevation_map[5],
+                    self.elevation_map[2] + self.elevation_map[6],
+                    self.traversability_input,
+                    self.traversability_mask_dummy,
+                    size=(self.cell_n * self.cell_n),
+                )
 
-            traversability = self.traversability_filter(self.traversability_input)
-            self.elevation_map[3][3:-3, 3:-3] = traversability.reshape(
-                (traversability.shape[2], traversability.shape[3])
-            )
+                traversability = self.traversability_filter(self.traversability_input)
+                self.elevation_map[3][3:-3, 3:-3] = traversability.reshape(
+                    (traversability.shape[2], traversability.shape[3])
+                )
 
         # Log final state
         self.update_normal(self.traversability_input)
@@ -863,23 +871,7 @@ class ElevationMap:
                 m = self.process_map_for_publish(m, fill_nan=p.fill_nan, add_z=p.is_height_layer, xp=xp)
             else:
                 raise KeyError(f"Layer '{name}' is not in the map")
-        # Transform to align elevation_mapping_cupy with grid_map coordinate convention.
-        #
-        # elevation_mapping_cupy uses Row=Y, Col=X (see kernels/custom_kernels.py:35)
-        # grid_map uses Row→-X, Col→-Y (see grid_map_core/src/GridMapMath.cpp:64-67
-        #   transformBufferOrderToMapFrame returns {-index[0], -index[1]})
-        #
-        # Required transformation:
-        #   1. Transpose: swap axes so Row=X, Col=Y (matching grid_map's axis assignment)
-        #   2. Flip axis 0: so increasing row → decreasing X (matching grid_map's -X)
-        #   3. Flip axis 1: so increasing col → decreasing Y (matching grid_map's -Y)
-        #
-        # This is equivalent to: rot90(m.T, k=2) or flip(flip(m.T, 0), 1)
-        #
-        # Old 180° rotation (incorrect - missing transpose, caused 90° CCW error in RViz):
-        # m = xp.flip(m, 0)
-        # m = xp.flip(m, 1)
-        m = self._transform_to_grid_map_coordinate_convention(m)
+        m = xp.flip(m, axis=(0, 1))
         
         if return_cupy:
             # Return CuPy array directly (no CPU transfer)
@@ -893,45 +885,6 @@ class ElevationMap:
             self.copy_to_cpu(m, data, stream=stream)
             return None
 
-    def _transform_to_grid_map_coordinate_convention(self, m):
-        """Transform the map to the grid_map coordinate convention.
-
-        elevation_mapping_cupy uses Row=Y, Col=X (see kernels/custom_kernels.py:35)
-        grid_map uses Row→-X, Col→-Y (see grid_map_core/src/GridMapMath.cpp:64-67
-        transformBufferOrderToMapFrame returns {-index[0], -index[1]})
-        Required transformation:
-           1. Transpose: swap axes so Row=X, Col=Y (matching grid_map's axis assignment)
-           2. Flip axis 0: so increasing row → decreasing X (matching grid_map's -X)
-           3. Flip axis 1: so increasing col → decreasing Y (matching grid_map's -Y)
-
-        This is equivalent to: rot90(m.T, k=2) or flip(flip(m.T, 0), 1)
-        Using rot90 is more efficient (single operation vs 3 operations).
-
-        Args:
-            m (cupy._core.core.ndarray):
-
-        Returns:
-            cupy._core.core.ndarray:
-        """
-        # Optimized: single rot90 operation instead of transpose + 2 flips
-        # This reduces intermediate array allocations
-        return xp.rot90(m.T, k=2)
-
-    def _transform_to_elevation_mapping_coordinate_convention(self, m):
-        """Transform from grid_map coordinate convention back to elevation_mapping_cupy convention.
-
-        This is the inverse of _transform_to_grid_map_coordinate_convention.
-        Inverse of rot90(m.T, k=2) is rot90(m, k=-2).T or rot90(m, k=2).T
-
-        Args:
-            m (cupy._core.core.ndarray):
-
-        Returns:
-            cupy._core.core.ndarray:
-        """
-        # Optimized: single rot90 operation instead of 2 flips + transpose
-        # Inverse of rot90(m.T, k=2) is rot90(m, k=2).T
-        return xp.rot90(m, k=2).T
 
     def get_normal_maps(self):
         """Get the normal maps.
@@ -1108,9 +1061,9 @@ class ElevationMap:
 
         # Transform the layer data from grid_map coordinate convention to the elevation_mapping_cupy coordinate convention
         for name, array in layer_data.items():
-            layer_data[name] = self._transform_to_elevation_mapping_coordinate_convention(array)
+            layer_data[name] = xp.flip(array, axis=(0, 1))
         if mask is not None:
-            mask = self._transform_to_elevation_mapping_coordinate_convention(mask)
+            mask = xp.flip(mask, axis=(0, 1))
 
         sample_shape: Optional[Tuple[int, int]] = None
         for array in layer_data.values():
@@ -1187,7 +1140,7 @@ class ElevationMap:
 
         # Transform the raw layer data from grid_map coordinate convention to the elevation_mapping_cupy coordinate convention
         for name, array in raw_layers.items():
-            raw_layers[name] = self._transform_to_elevation_mapping_coordinate_convention(array)
+            raw_layers[name] = xp.flip(array, axis=(0, 1))
 
         sample_shape = next(iter(raw_layers.values())).shape
         self._validate_geometry_against_shape(sample_shape, geometry)

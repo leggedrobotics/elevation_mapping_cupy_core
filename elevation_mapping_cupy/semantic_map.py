@@ -192,7 +192,7 @@ class SemanticMap:
         """
         layer_indices = cp.array([], dtype=cp.int32)
         for it, (key, val) in enumerate(layer_specs.items()):
-            if key in val == fusion_alg:
+            if val == fusion_alg:
                 layer_indices = cp.append(layer_indices, it).astype(cp.int32)
         return layer_indices
 
