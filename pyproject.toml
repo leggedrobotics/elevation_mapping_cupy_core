@@ -8,13 +8,13 @@ authors = [
   { name = "Deepana Ishtaweera", email = "deepan@leggedrobotcs.com" },
 ]
 dependencies = [
-  "cupy-cuda12x==13.6.0",
-  "numpy==1.26.4",
-  "scipy==1.15.3",
-  "shapely==1.7.1",
-  "simple-parsing==0.1.7",
-  "ruamel.yaml==0.18.16",
-  "opencv-python==4.11.0.86",
+  "cupy-cuda12x",
+  "numpy",
+  "scipy",
+  "simple-parsing",
+  "ruamel.yaml",
+  "opencv-python",
+  "shapely",
 ]
 
 [project.urls]
