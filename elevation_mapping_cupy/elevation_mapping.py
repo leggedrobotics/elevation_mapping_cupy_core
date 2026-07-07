@@ -661,6 +661,38 @@ class ElevationMap:
                 image_width,
             )
 
+            # Stamp a persistent observation layer so downstream consumers
+            # (e.g. SemanticInpainting plugin) can distinguish "camera saw
+            # this cell" from "never observed".  Using semantic_value == 0
+            # is not robust because the segmenter can legitimately output 0.
+            obs_name = "_sem_observed"
+            if obs_name not in self.semantic_map.layer_names:
+                self.semantic_map.add_layer(obs_name)
+                # Mark layer as persistent (do NOT reset on each update)
+                obs_idx = self.semantic_map.get_index(obs_name)
+                self.semantic_map.delete_new_layers[obs_idx] = 0
+            obs_idx = self.semantic_map.get_index(obs_name)
+            # Set 1.0 for every cell that had valid camera correspondence AND
+            # whose corresponding pixel passed the confidence gate. Without the
+            # gate, cells seen only at low confidence (never fused) would be
+            # marked as trusted inpainting sources while holding stale values.
+            observed = self.valid_correspondence
+            if confidence is not None:
+                u = self.uv_correspondence[0].astype(cp.int64)
+                v = self.uv_correspondence[1].astype(cp.int64)
+                flat_idx = cp.clip(
+                    v * int(image_width) + u, 0, int(image_height) * int(image_width) - 1
+                )
+                conf_cells = confidence[0].reshape(-1)[flat_idx.reshape(-1)].reshape(
+                    self.cell_n, self.cell_n
+                )
+                observed = observed & (conf_cells >= self.param.confidence_fusion_threshold)
+            self.semantic_map.semantic_map[obs_idx] = cp.where(
+                observed,
+                cp.ones_like(self.semantic_map.semantic_map[obs_idx]),
+                self.semantic_map.semantic_map[obs_idx],
+            )
+
 
     def update_normal(self, dilated_map):
         """Clear the normal map and then apply the normal kernel with dilated map as input.

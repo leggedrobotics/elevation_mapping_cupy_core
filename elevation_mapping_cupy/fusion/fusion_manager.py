@@ -92,9 +92,13 @@ class FusionManager(object):
         image_width,
         semantic_map,
         new_map,
+        aux_layer_idx=None,
     ):
         """
-        Execute a registered fusion plugin
+        Execute a registered fusion plugin.
+
+        aux_layer_idx: index of an auxiliary companion layer some plugins need
+        (e.g. the per-cell evidence weight of image_confidence_weighted).
         """
         idx = self.get_plugin_idx(name, "image")
         if idx is not None:
@@ -109,6 +113,7 @@ class FusionManager(object):
                 image_width,
                 semantic_map,
                 new_map,
+                aux_layer_idx,
             )
         # else:
         #     raise ValueError("Plugin {} is not registered".format(name))

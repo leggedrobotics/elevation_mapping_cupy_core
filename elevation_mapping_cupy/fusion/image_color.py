@@ -72,6 +72,7 @@ class ImageColor(FusionBase):
         image_width,
         semantic_map,
         new_map,
+        aux_layer_idx=None,  # unused; API compatibility with fusion_manager
     ):
         # Note: confidence parameter is accepted for API compatibility but not used in color fusion
         self.color_correspondences_to_map_kernel(
