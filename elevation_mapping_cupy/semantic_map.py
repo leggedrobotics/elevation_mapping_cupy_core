@@ -297,6 +297,18 @@ class SemanticMap:
                 print(f"Layer {channel} not found!")
                 return
 
+            # confidence_weighted fusion keeps a per-cell evidence weight in a
+            # companion layer (underscore prefix: internal, excluded from
+            # inpainting/export; shifted and cleared with the semantic map).
+            aux_layer_idx = None
+            if fusion == "confidence_weighted":
+                weight_layer = f"_conf_w_{channel}"
+                if weight_layer not in self.layer_names:
+                    self.add_layer(weight_layer)
+                    # persistent: exempt from per-update new_map clearing
+                    self.delete_new_layers[self.get_index(weight_layer)] = 0
+                aux_layer_idx = self.get_index(weight_layer)
+
             # update the layers with the fusion algorithm
             self.fusion_manager.execute_image_plugin(
                 fusion,
@@ -310,6 +322,7 @@ class SemanticMap:
                 image_width,
                 self.semantic_map,
                 self.new_map,
+                aux_layer_idx,
             )
 
     def decode_max(self, mer):

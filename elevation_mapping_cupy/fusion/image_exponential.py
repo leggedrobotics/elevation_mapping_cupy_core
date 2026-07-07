@@ -76,6 +76,7 @@ class ImageExponential(FusionBase):
         image_width,
         semantic_map,
         new_map,
+        aux_layer_idx=None,  # unused; API compatibility with fusion_manager
     ):
         # Handle missing confidence: create all-ones array (no filtering)
         if confidence is None:
