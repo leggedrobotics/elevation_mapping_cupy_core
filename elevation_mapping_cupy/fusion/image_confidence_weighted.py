@@ -7,11 +7,12 @@
 #   - a fresh cell (w = 0) takes the observation fully,
 #   - a cell built from confident history resists low-confidence updates
 #     proportionally (no threshold cliff),
-#   - exponential forgetting (conf_decay) plus a weight cap (conf_weight_cap)
-#     bound how entrenched a cell can get, so repeated confident observations
-#     always win within ~cap frames after a scene change.
-# This is a 1-D Kalman-style update with confidence as inverse variance and
-# exponential forgetting.
+#   - a weight cap (conf_weight_cap) bounds how entrenched a cell can get, so
+#     new confident observations always retain at least conf/(conf+cap)
+#     influence and win within ~cap frames after a scene change.
+# This is a 1-D information filter: `w` is accumulated evidence (inverse
+# variance) and alpha is the Kalman gain. The cap is a rate-independent
+# plasticity floor (no exponential forgetting term is needed on top of it).
 #
 import cupy as cp
 import string
@@ -20,13 +21,13 @@ from .fusion_manager import FusionBase
 
 
 def confidence_weighted_correspondences_to_map_kernel(
-    resolution, width, height, conf_floor, conf_decay, weight_cap
+    resolution, width, height, conf_floor, weight_cap
 ):
     kernel = cp.ElementwiseKernel(
         in_params=(
             "raw U sem_map, raw U map_idx, raw U weight_idx, raw U image_mono, "
-            "raw U confidence, raw U uv_correspondence, raw B valid_correspondence, "
-            "raw U image_height, raw U image_width"
+            "raw U confidence, raw U obs_weight, raw U uv_correspondence, "
+            "raw B valid_correspondence, raw U image_height, raw U image_width"
         ),
         out_params="raw U new_sem_map",
         preamble=string.Template(
@@ -46,12 +47,17 @@ def confidence_weighted_correspondences_to_map_kernel(
                 int cell_idx_2 = get_map_idx(i, 1);
                 int idx = int(uv_correspondence[cell_idx]) + int(uv_correspondence[cell_idx_2]) * image_width;
 
-                float conf = (float)confidence[idx];
-                if (conf >= ${conf_floor}) {
-                    // Decayed accumulated evidence, then Kalman-style blend.
-                    // Guard conf==0 && w==0 (possible when conf_floor is 0.0):
-                    // 0/0 would poison the cell with NaN.
-                    float w = (float)sem_map[wi] * ${conf_decay};
+                // conf_floor gates raw pixel quality; the per-cell observation
+                // weight (e.g. distance falloff) then scales the evidence, so
+                // far cells fuse gently and stay weakly held without the floor
+                // turning the falloff into a hard range cutoff.
+                float pconf = (float)confidence[idx];
+                if (pconf >= ${conf_floor}) {
+                    float conf = pconf * (float)obs_weight[cell_idx];
+                    // Information-filter update: Kalman gain a = conf/(conf+w).
+                    // Guard 0/0 (conf_floor 0.0 or extreme distance falloff):
+                    // it would poison the cell with NaN.
+                    float w = (float)sem_map[wi];
                     float denom = conf + w;
                     float a = (denom > 0.0f) ? (conf / denom) : 0.0f;
                     float v_old = (float)sem_map[vi];
@@ -69,7 +75,7 @@ def confidence_weighted_correspondences_to_map_kernel(
                 new_sem_map[wi] = sem_map[wi];
             }
             """
-        ).substitute(conf_floor=conf_floor, conf_decay=conf_decay, weight_cap=weight_cap),
+        ).substitute(conf_floor=conf_floor, weight_cap=weight_cap),
         name="confidence_weighted_correspondences_to_map_kernel",
     )
     return kernel
@@ -82,7 +88,6 @@ class ImageConfidenceWeighted(FusionBase):
         self.resolution = params.resolution
 
         self.conf_floor = getattr(params, "conf_floor", 0.2)
-        self.conf_decay = getattr(params, "conf_decay", 0.97)
         self.weight_cap = getattr(params, "conf_weight_cap", 4.0)
 
         self.kernel = confidence_weighted_correspondences_to_map_kernel(
@@ -90,10 +95,10 @@ class ImageConfidenceWeighted(FusionBase):
             width=self.cell_n,
             height=self.cell_n,
             conf_floor=self.conf_floor,
-            conf_decay=self.conf_decay,
             weight_cap=self.weight_cap,
         )
         self._warned_no_weight_layer = False
+        self._ones_obs_weight = None
 
     def __call__(
         self,
@@ -108,6 +113,7 @@ class ImageConfidenceWeighted(FusionBase):
         semantic_map,
         new_map,
         aux_layer_idx=None,
+        obs_weight=None,
     ):
         if aux_layer_idx is None:
             if not self._warned_no_weight_layer:
@@ -118,10 +124,16 @@ class ImageConfidenceWeighted(FusionBase):
                 self._warned_no_weight_layer = True
             return
 
-        # Missing confidence: treat as fully confident (degrades to a decayed
-        # running average, still no threshold cliff)
+        # Missing confidence: treat as fully confident (degrades to a plain
+        # evidence-accumulating running average, still no threshold cliff)
         if confidence is None:
             confidence = cp.ones((1, int(image_height), int(image_width)), dtype=cp.float32)
+
+        # Missing per-cell observation weight: uniform (no distance falloff)
+        if obs_weight is None:
+            if self._ones_obs_weight is None:
+                self._ones_obs_weight = cp.ones((self.cell_n, self.cell_n), dtype=cp.float32)
+            obs_weight = self._ones_obs_weight
 
         self.kernel(
             semantic_map,
@@ -129,6 +141,7 @@ class ImageConfidenceWeighted(FusionBase):
             cp.uint64(aux_layer_idx),
             image[j],
             confidence[j] if confidence.shape[0] > j else confidence[0],
+            obs_weight,
             uv_correspondence,
             valid_correspondence,
             image_height,

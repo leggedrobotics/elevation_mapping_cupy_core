@@ -269,6 +269,7 @@ class SemanticMap:
         valid_correspondence: cp._core.core.ndarray = None,
         image_height: cp._core.core.ndarray = None,
         image_width: cp._core.core.ndarray = None,
+        obs_weight: Optional[cp._core.core.ndarray] = None,
     ):
         """Update the semantic map with the new image.
 
@@ -281,6 +282,8 @@ class SemanticMap:
             valid_correspondence:
             image_height:
             image_width:
+            obs_weight: Per-cell observation weight (cell_n, cell_n), optional
+                (e.g. distance-based falloff); used by confidence_weighted fusion
         """
 
         process_channels, fusion_methods = self.get_fusion(
@@ -323,6 +326,7 @@ class SemanticMap:
                 self.semantic_map,
                 self.new_map,
                 aux_layer_idx,
+                obs_weight,
             )
 
     def decode_max(self, mer):
