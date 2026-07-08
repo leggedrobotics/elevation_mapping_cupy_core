@@ -635,6 +635,27 @@ class ElevationMap:
         self.uv_correspondence *= 0
         self.valid_correspondence[:, :] = False
 
+        # Distance-based semantic fusion weight. Camera-to-BEV positional error
+        # is dominated by grazing-angle pixel smear and pose-angular error, both
+        # ~ d^2/h (std grows quadratically with range). The information weight is
+        # the inverse variance, so ~ 1/d^4:
+        #     f(d) = 1 / (1 + (d / range)^4)
+        # range = crossover distance where far-field (d^4) error variance meets
+        # the near-field noise floor: ~flat (>=0.94) inside 0.55*range, 0.5 at
+        # range, ~0.06 at 2*range. semantic_fusion_range_m: 0 = auto
+        # (map_length / 4), negative disables.
+        obs_weight = None
+        rng = float(getattr(self.param, "semantic_fusion_range_m", 0.0))
+        if rng == 0.0:
+            rng = float(self.param.map_length) / 4.0
+        if rng > 0.0:
+            idxs = cp.arange(self.cell_n, dtype=cp.float32)
+            dxc = (idxs - cp.float32(x1))[:, None]
+            dyc = (idxs - cp.float32(y1))[None, :]
+            d2_m = (dxc * dxc + dyc * dyc) * cp.float32(self.resolution) ** 2
+            d4_over_r4 = (d2_m * d2_m) / cp.float32(rng ** 4)
+            obs_weight = (1.0 / (1.0 + d4_over_r4)).astype(cp.float32)
+
         with self.map_lock:
             self.image_to_map_correspondence_kernel(
                 self.elevation_map,
@@ -659,6 +680,7 @@ class ElevationMap:
                 self.valid_correspondence,
                 image_height,
                 image_width,
+                obs_weight,
             )
 
             # Stamp a persistent observation layer so downstream consumers

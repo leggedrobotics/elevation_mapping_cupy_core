@@ -93,12 +93,15 @@ class FusionManager(object):
         semantic_map,
         new_map,
         aux_layer_idx=None,
+        obs_weight=None,
     ):
         """
         Execute a registered fusion plugin.
 
         aux_layer_idx: index of an auxiliary companion layer some plugins need
         (e.g. the per-cell evidence weight of image_confidence_weighted).
+        obs_weight: optional per-cell observation weight map (cell_n, cell_n),
+        e.g. distance-based falloff.
         """
         idx = self.get_plugin_idx(name, "image")
         if idx is not None:
@@ -114,6 +117,7 @@ class FusionManager(object):
                 semantic_map,
                 new_map,
                 aux_layer_idx,
+                obs_weight,
             )
         # else:
         #     raise ValueError("Plugin {} is not registered".format(name))

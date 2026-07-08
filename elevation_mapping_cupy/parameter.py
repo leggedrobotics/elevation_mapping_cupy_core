@@ -206,8 +206,8 @@ class Parameter(Serializable):
 
     # image_confidence_weighted fusion (per-cell evidence weight):
     conf_floor: float = 0.2  # skip pixels below this confidence entirely
-    conf_decay: float = 0.97  # per-observation decay of the accumulated cell weight (forgetting)
-    conf_weight_cap: float = 4.0  # max accumulated cell weight; bounds how entrenched a cell can get
+    conf_weight_cap: float = 4.0  # max accumulated cell weight; rate-independent plasticity floor (alpha_min = conf/(conf+cap))
+    semantic_fusion_range_m: float = 0.0  # distance falloff (inverse-variance): evidence scaled by 1/(1+(d/range)^4). 0 = auto (map_length/4), negative = disabled
 
     plugin_config_file: str = "config/plugin_config.yaml"  # configuration file for the plugin
     weight_file: str = "config/weights.dat"  # weight file for traversability filter
