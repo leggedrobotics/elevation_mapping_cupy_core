@@ -3,7 +3,13 @@ name = "elevation-mapping-cupy-core"
 version = "0.1.0"
 description = "Dev + MuJoCo simulation environment for elevation_mapping_cupy_core"
 channels = ["conda-forge"]
-platforms = ["linux-64", "linux-aarch64"]
+platforms = [
+  # uv assumes glibc 2.28 for wheel selection unless told otherwise, which rules
+  # out the manylinux_2_34 warp-lang wheels. JetPack 6 is Ubuntu 22.04 (2.35);
+  # 2.34 is the minimum those wheels need.
+  { platform = "linux-64", glibc = "2.34" },
+  { platform = "linux-aarch64", glibc = "2.34" },
+]
 
 [dependencies]
 python = "3.10.*"
@@ -12,12 +18,19 @@ numpy = "<2"
 scipy = "*"
 pytest = "*"
 matplotlib = "*"
+# Software OpenGL (llvmpipe) so MuJoCo can render scene previews headless.
+# The Jetson's own EGL is GLES-only and exposes no EGL device, while MuJoCo's
+# EGL context asks for desktop EGL_OPENGL_BIT on a device display.
+mesalib = "*"
 
 [pypi-dependencies]
 mujoco = ">=3.2"
 # Optional sensor backend: real LiDAR scan patterns (Livox, Velodyne, Ouster).
 # The base package is pure Python over MuJoCo; GPU backends are extras.
 mujoco-lidar = ">=0.3"
+# GPU ray casting for the LiDAR backend (lidar_backend="warp"). The stock PyPI
+# aarch64 wheel builds its kernels against the local CUDA toolkit at runtime.
+warp-lang = ">=1.7"
 simple-parsing = "*"
 "ruamel.yaml" = "*"
 opencv-python-headless = "*"
@@ -62,3 +75,10 @@ test = "pytest elevation_mapping_cupy/tests -q"
 test-sim = "pytest sim/tests -q"
 test-all = "pytest elevation_mapping_cupy/tests sim/tests -q"
 sim = "python -m emsim.cli"
+# Scene rendering goes through Mesa's software rasteriser. LD_LIBRARY_PATH has
+# to be set before the process starts (the dynamic loader reads it once), so it
+# lives here rather than in emsim.render.
+[tasks.render]
+cmd = "python -m emsim.render"
+env = { MUJOCO_GL = "egl", MESA_LOADER_DRIVER_OVERRIDE = "llvmpipe", GALLIUM_DRIVER = "llvmpipe", __EGL_VENDOR_LIBRARY_DIRS = "$PIXI_PROJECT_ROOT/.pixi/envs/default/share/glvnd/egl_vendor.d", LD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/.pixi/envs/default/lib:$LD_LIBRARY_PATH" }
+

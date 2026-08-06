@@ -99,7 +99,7 @@ class HField:
     def to_mjcf_geom(self) -> str:
         return (
             f'    <geom name="{self.name}" type="hfield" hfield="{self.name}" '
-            f'pos="0 0 0" rgba="0.5 0.55 0.5 1"/>'
+            f'pos="0 0 0" material="terrain_mat"/>'
         )
 
 
@@ -127,16 +127,37 @@ class Scene:
         return h
 
     def to_mjcf(self) -> str:
-        assets = [self.hfield.to_mjcf_asset()] if self.hfield else []
+        # Visual-only assets. Materials, textures and lights play no part in ray
+        # casting, so none of this touches the sensor or ground-truth paths.
+        assets = [
+            '    <texture name="sky" type="skybox" builtin="gradient" rgb1="0.5 0.62 0.75"'
+            ' rgb2="0.15 0.2 0.3" width="256" height="256"/>',
+            '    <texture name="grid" type="2d" builtin="checker" rgb1="0.32 0.34 0.38"'
+            ' rgb2="0.42 0.44 0.48" width="512" height="512"/>',
+            '    <material name="ground_mat" texture="grid" texrepeat="24 24" reflectance="0.05"/>',
+            '    <texture name="terrain_tex" type="2d" builtin="checker" rgb1="0.38 0.45 0.34"'
+            ' rgb2="0.48 0.55 0.42" width="512" height="512"/>',
+            '    <material name="terrain_mat" texture="terrain_tex" texrepeat="20 20"/>',
+        ]
+        if self.hfield:
+            assets.append(self.hfield.to_mjcf_asset())
         geoms = [self.hfield.to_mjcf_geom()] if self.hfield else []
         geoms += [b.to_mjcf(f"box_{i}") for i, b in enumerate(self.boxes)]
-        asset_block = "  <asset>\n" + "\n".join(assets) + "\n  </asset>\n" if assets else ""
+        asset_block = "  <asset>\n" + "\n".join(assets) + "\n  </asset>\n"
         return f"""<mujoco model="emsim_{self.name}">
   <compiler angle="radian" autolimits="true"/>
   <option gravity="0 0 -9.81"/>
+  <visual>
+    <!-- Default offscreen framebuffer is 640x480, which caps preview renders. -->
+    <global offwidth="1280" offheight="960"/>
+    <headlight ambient="0.45 0.45 0.45" diffuse="0.55 0.55 0.55" specular="0.1 0.1 0.1"/>
+    <quality shadowsize="4096"/>
+  </visual>
 {asset_block}  <worldbody>
-    <light pos="0 0 6" dir="0 0 -1"/>
-    <geom name="ground" type="plane" pos="0 0 {self.ground_z:.6g}" size="30 30 0.1" rgba="0.4 0.4 0.45 1"/>
+    <light pos="4 -4 8" dir="-0.4 0.4 -1" directional="true" diffuse="0.5 0.5 0.5"/>
+    <light pos="-5 3 6" dir="0.5 -0.3 -1" directional="true" diffuse="0.25 0.25 0.25"/>
+    <geom name="ground" type="plane" pos="0 0 {self.ground_z:.6g}" size="30 30 0.1"
+          material="ground_mat"/>
 {chr(10).join(geoms)}
     <body name="{ROBOT_BODY}" mocap="true" pos="0 0 1">
       <geom name="robot_shell" type="box" size="0.3 0.16 0.12" rgba="0.85 0.25 0.2 1"

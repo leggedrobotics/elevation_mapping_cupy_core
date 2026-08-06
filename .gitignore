@@ -12,8 +12,10 @@ dist/
 venv/
 .pixi/
 
-# Simulation output
+# Simulation output: rendered scenes, plots and reports
 sim/report/
+sim/**/*.png
+*_render_*.png
 
 # IDE / tooling
 .idea/

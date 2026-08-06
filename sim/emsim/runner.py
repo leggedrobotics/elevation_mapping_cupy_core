@@ -63,7 +63,7 @@ class RunConfig:
     # covers only ~12% of a 2.5 m disc; 20 deg of downward tilt takes that to
     # ~85%, which is what a ground-mapping mount is actually for.
     lidar_pattern: str = "vlp32"
-    lidar_backend: str = "cpu"
+    lidar_backend: str = "auto"  # "auto" uses Warp on CUDA, else cpu
     lidar_tilt_down_deg: float = 20.0
     lidar_offset_body: Tuple[float, float, float] = (0.0, 0.0, 0.0)
 

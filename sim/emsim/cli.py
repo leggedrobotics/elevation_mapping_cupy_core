@@ -15,7 +15,7 @@ from typing import List, Optional, Sequence
 import numpy as np
 
 from emsim import plotting, scenes
-from emsim.lidar import PATTERNS as LIDAR_PATTERNS
+from emsim.lidar import BACKENDS as LIDAR_BACKENDS, PATTERNS as LIDAR_PATTERNS
 from emsim.metrics import MapError
 from emsim.runner import RunConfig, RunResult, TRAJECTORIES, run
 from emsim.sensor import SensorNoise
@@ -36,8 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="LiDAR scan pattern when --sensor lidar")
     p.add_argument("--lidar-tilt", type=float, default=20.0,
                    help="downward LiDAR mount tilt [deg]")
-    p.add_argument("--lidar-backend", default="cpu", choices=("cpu", "warp", "taichi", "jax"),
-                   help="mujoco-lidar backend; non-cpu needs the matching extra installed")
+    p.add_argument("--lidar-backend", default="auto", choices=list(LIDAR_BACKENDS),
+                   help="mujoco-lidar ray-cast backend; 'auto' uses Warp on CUDA "
+                        "(~10x faster) and falls back to cpu")
     p.add_argument("--trajectory", default="spin", choices=TRAJECTORIES)
     p.add_argument("--steps", type=int, default=24, help="number of frames")
     p.add_argument("--resolution", type=float, default=0.04, help="map resolution [m]")

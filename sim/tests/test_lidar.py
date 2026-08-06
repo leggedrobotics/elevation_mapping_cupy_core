@@ -103,7 +103,13 @@ def test_robot_shell_is_excluded(built_scene):
     a, b = excluded.capture(R, t), included.capture(R, t)
 
     assert a.ranges.max() > 2.0, "the ground should be visible out to several metres"
-    assert b.ranges.max() < 0.5, "every ray should be stopped by the shell it sits inside"
+    # Every ray is stopped by the shell it sits inside. The CPU path reports
+    # those interior hits at the shell's own half-extents; Warp culls backfaces
+    # and reports nothing at all. Either way, the terrain is gone.
+    assert b.points.shape[0] == 0 or b.ranges.max() < 0.5, (
+        f"the shell should block the view when not excluded, got "
+        f"{b.points.shape[0]} returns out to {b.ranges.max() if b.points.shape[0] else 0:.2f} m"
+    )
 
     data.mocap_pos[scenes.mocap_id(model, scenes.ROBOT_BODY)] = np.array([0.0, 0.0, 1.0])
     mujoco.mj_forward(model, data)
@@ -165,6 +171,65 @@ def test_noise_is_applied_along_the_ray(built_scene):
 def test_unknown_pattern_is_rejected(built_scene):
     with pytest.raises(KeyError, match="unknown LiDAR pattern"):
         make_lidar(built_scene, pattern="not_a_lidar")
+
+
+def test_unknown_backend_is_rejected(built_scene):
+    with pytest.raises(ValueError, match="unknown LiDAR backend"):
+        make_lidar(built_scene, backend="not_a_backend")
+
+
+def test_auto_backend_resolves(built_scene):
+    """``auto`` picks Warp when CUDA is there, cpu otherwise -- never ``auto``."""
+    resolved = lidar.resolve_backend("auto")
+    assert resolved in ("warp", "cpu")
+    assert resolved == ("warp" if lidar.warp_available() else "cpu")
+    sensor = make_lidar(built_scene, pattern="vlp32", backend="auto")
+    assert sensor.backend == resolved, "the sensor must record the concrete backend"
+
+
+needs_warp = pytest.mark.skipif(
+    not lidar.warp_available(), reason="warp-lang with a CUDA device is not available"
+)
+
+
+@needs_warp
+@pytest.mark.parametrize("pattern", ["vlp32", "os128"])
+def test_warp_matches_cpu(pattern, built_scene):
+    """The GPU path must agree with the reference CPU path, ray for ray."""
+    base = np.array([0.0, 0.0, 0.8])
+    captures = {}
+    for backend in ("cpu", "warp"):
+        sensor = make_lidar(built_scene, pattern=pattern, backend=backend, tilt_down_deg=20.0)
+        captures[backend] = sensor.capture(*sensor.pose_for(base, yaw=0.7))
+
+    cpu, warp = captures["cpu"], captures["warp"]
+    assert cpu.points.shape == warp.points.shape, "the two backends dropped different rays"
+    # float32 ray casting on two different devices; agreement is to that precision.
+    np.testing.assert_allclose(warp.ranges, cpu.ranges, atol=1e-4)
+    np.testing.assert_allclose(warp.points, cpu.points, atol=1e-4)
+
+
+@needs_warp
+def test_warp_is_faster_than_cpu(built_scene):
+    """The whole point of the backend. Warp measures ~10x on an Orin."""
+    import time
+
+    base = np.array([0.0, 0.0, 0.8])
+    timings = {}
+    for backend in ("cpu", "warp"):
+        sensor = make_lidar(built_scene, pattern="os128", backend=backend, tilt_down_deg=20.0)
+        R, t = sensor.pose_for(base, yaw=0.0)
+        sensor.capture(R, t)  # warm up: Warp compiles its kernels on first use
+        start = time.perf_counter()
+        for _ in range(3):
+            sensor.capture(R, t)
+        timings[backend] = (time.perf_counter() - start) / 3
+
+    speedup = timings["cpu"] / timings["warp"]
+    assert speedup > 2.0, (
+        f"warp {timings['warp'] * 1e3:.1f} ms vs cpu {timings['cpu'] * 1e3:.1f} ms "
+        f"is only {speedup:.1f}x"
+    )
 
 
 def test_lidar_mount_is_a_geomless_mocap_body(built_scene):

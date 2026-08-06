@@ -11,8 +11,9 @@ scene (MJCF)  ──►  depth frames (mj_multiRay)  ──►  ElevationMap  �
       └────────►  ground truth (mj_ray, straight down)  ────────────┘
 ```
 
-Nothing renders. Both the sensor and the ground truth are ray casts, so the
-whole harness runs headless on CPU apart from the mapping itself.
+Both the sensor and the ground truth are ray casts, so the whole harness runs
+headless on CPU apart from the mapping itself. Rendering is only ever used for
+looking at scenes, never for producing data.
 
 ## Running it
 
@@ -80,11 +81,39 @@ and one LiDAR scan overlaid as point clouds — which side by side is the cleare
 statement of how differently the two sensors sample the same ground. No GPU, no
 mapping.
 
-It is drawn from the scene's own geometry rather than rendered through OpenGL.
-There is no working GL stack here: the Jetson's EGL vendor driver is not visible
-to this environment's `libEGL`, and Mesa's software EGL fails too. For this
-purpose the height field plus the sensor returns is more informative than a
-shaded screenshot anyway.
+It is drawn from the scene's own geometry, which shows the sensor returns
+against the terrain. For an actual rendered view, see below.
+
+### Rendered views
+
+```bash
+pixi run render --all --views all --out sim/report
+```
+
+Renders through MuJoCo's own rasteriser: `oblique`, `front` and `top` presets,
+about a second per frame. The cameras sit deliberately low — these terrains have
+decimetre relief over metres, which flat-shades into invisibility from above.
+
+Getting this working headless on a Jetson takes some setup, which is why it has
+its own module and pixi task:
+
+- Tegra's EGL exposes no usable `EGL_PLATFORM_DEVICE_EXT` display and is
+  GLES-only, while MuJoCo's context asks for desktop `EGL_OPENGL_BIT`. So the
+  render goes through Mesa's software rasteriser (`mesalib`), with the Gallium
+  driver forced to `llvmpipe` — otherwise Mesa tries the Tegra KMS nodes and
+  reports `kmsro: driver missing`.
+- Several EGL devices are enumerated and only one yields a working context.
+  MuJoCo caches its EGL display on the first context it builds, so a failed
+  attempt cannot be retried in-process. `emsim.render.pick_egl_device` therefore
+  runs the whole handshake itself first and sets `MUJOCO_EGL_DEVICE_ID`.
+- `LD_LIBRARY_PATH` has to point at Mesa *before the process starts*, since the
+  dynamic loader reads it once. That is what the `render` pixi task is for;
+  running `python -m emsim.render` outside it will not find Mesa.
+
+Rendering is for looking at scenes, not for producing data: the sensors and the
+ground truth are ray casts and never touch OpenGL.
+
+Rendered PNGs are gitignored.
 
 ## Layout
 
@@ -97,6 +126,7 @@ shaded screenshot anyway.
 | `emsim/runner.py` | Drives `ElevationMap` over a trajectory, collects timings |
 | `emsim/metrics.py` | RMSE / MAE / bias / p95 / coverage against ground truth |
 | `emsim/plotting.py` | Figures: comparison, layers, surface, convergence, filmstrip |
+| `emsim/render.py` | Rendered views through MuJoCo's rasteriser (headless via Mesa) |
 | `emsim/cli.py` | `python -m emsim.cli` |
 
 Only `runner.py` needs CuPy. Scenes, the sensor and the ground-truth sampler are
