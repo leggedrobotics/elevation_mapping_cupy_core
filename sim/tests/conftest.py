@@ -7,12 +7,23 @@ on them.
 
 from __future__ import annotations
 
-from typing import Callable, Dict, Sequence
+from pathlib import Path
+from typing import Callable, Dict, Optional, Sequence
 
 import pytest
 
 from emsim import scenes
 from emsim.heightmap import GroundTruthHeightmap
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--viz-dir",
+        action="store",
+        default=None,
+        metavar="DIR",
+        help="write a figure per test that has one, into DIR. Off by default.",
+    )
 
 
 def _cupy_available() -> bool:
@@ -60,6 +71,31 @@ def gt_sampler(built_scene) -> Callable[..., GroundTruthHeightmap]:
         return cache[key]
 
     return build
+
+
+@pytest.fixture
+def viz(request) -> Callable[..., Optional[Path]]:
+    """Emit a figure for the current test, if ``--viz-dir`` was given.
+
+    A no-op otherwise, so tests can call it unconditionally::
+
+        viz("comparison", result)
+
+    ``kind`` is any of the ``plot_*`` functions in :mod:`emsim.plotting`.
+    """
+    out = request.config.getoption("--viz-dir")
+
+    def emit(kind: str, result, **kwargs) -> Optional[Path]:
+        if out is None:
+            return None
+        from emsim import plotting
+
+        fn = getattr(plotting, f"plot_{kind}")
+        # Node ids contain path separators and brackets; keep them out of filenames.
+        stem = request.node.name.replace("/", "_").replace("[", "-").replace("]", "")
+        return fn(result, Path(out) / f"{stem}_{kind}.png", **kwargs)
+
+    return emit
 
 
 @pytest.fixture(scope="session")

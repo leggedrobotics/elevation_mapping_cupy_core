@@ -94,13 +94,14 @@ def test_accuracy_holds_against_world_fixed_truth_while_driving(driven):
         assert err.p95 < 0.05, f"step {step.index}: {err}"
 
 
-def test_world_fixed_features_keep_their_world_position(driven):
+def test_world_fixed_features_keep_their_world_position(driven, viz):
     """A stair tread must read the same height at the same world point, always.
 
     This is the sharpest statement of what shifting has to get right: if the
     buffers rolled by the wrong amount or in the wrong direction, the tread
     would appear to slide across the world as the robot drives.
     """
+    viz("filmstrip", driven)
     resolution = driven.config.resolution
     # (x, y, expected height) for the "steps" scene: treads are 0.12 m apart,
     # 0.45 m deep, starting at x = 1.0. Probe tread centres and the flat approach.

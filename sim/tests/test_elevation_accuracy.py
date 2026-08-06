@@ -43,10 +43,11 @@ def spin_config(scene: str, **kwargs) -> RunConfig:
 
 
 @pytest.mark.parametrize("scene", sorted(SCENE_BUDGETS))
-def test_elevation_accuracy_per_scene(scene, sim_run):
+def test_elevation_accuracy_per_scene(scene, sim_run, viz):
     max_rmse, max_p95, min_coverage = SCENE_BUDGETS[scene]
     result = sim_run(f"spin::{scene}", spin_config(scene))
     err = result.error("elevation", radius=RADIUS)
+    viz("comparison", result, radius=RADIUS)
 
     assert err.coverage >= min_coverage, f"{scene}: only {err.coverage:.1%} of cells mapped ({err})"
     assert err.rmse <= max_rmse, f"{scene}: {err}"
@@ -60,9 +61,10 @@ def test_flat_ground_is_unbiased(sim_run):
     assert abs(err.bias) < 0.01, f"flat ground bias {err.bias:+.4f} m"
 
 
-def test_slope_gradient_is_recovered(sim_run):
+def test_slope_gradient_is_recovered(sim_run, viz):
     """The mapped surface must reproduce the ramp's gradient, not just its height."""
     result = sim_run("spin::slope", spin_config("slope"))
+    viz("surface", result, radius=RADIUS)
     est = result.layers["elevation"]
     X, _ = result.cell_centers()
     mask = result.mask(RADIUS) & np.isfinite(est) & (X > 1.2)  # on the ramp proper
@@ -72,13 +74,14 @@ def test_slope_gradient_is_recovered(sim_run):
     assert fit[0] == pytest.approx(np.tan(np.deg2rad(15.0)), abs=0.02), f"gradient {fit[0]:.4f}"
 
 
-def test_step_heights_are_resolved(sim_run):
+def test_step_heights_are_resolved(sim_run, viz):
     """Every visible stair tread must come out at its true height.
 
     A 0.8 m camera cannot see over the staircase, so the upper treads are
     legitimately occluded; those must stay unmapped rather than be invented.
     """
     result = sim_run("spin::steps", spin_config("steps"))
+    viz("surface", result, radius=RADIUS)
     est, (X, Y) = result.layers["elevation"], result.cell_centers()
     near_centreline = np.abs(Y) < 0.5
 
@@ -99,10 +102,11 @@ def test_step_heights_are_resolved(sim_run):
     assert checked >= 3, f"expected at least 3 treads in view, checked {checked}"
 
 
-def test_map_converges_as_frames_accumulate(sim_run):
+def test_map_converges_as_frames_accumulate(sim_run, viz):
     """Coverage must grow monotonically and accuracy must not degrade."""
     cfg = spin_config("rough", n_steps=12, record_per_step=True)
     result = sim_run("spin::rough::per_step", cfg)
+    viz("convergence", result)
     coverage = [s.error.coverage for s in result.steps]
     assert len(coverage) == 12
     assert coverage[0] < coverage[-1], "coverage should grow as the sweep proceeds"

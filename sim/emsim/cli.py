@@ -10,11 +10,11 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import numpy as np
 
-from emsim import scenes
+from emsim import plotting, scenes
 from emsim.metrics import MapError
 from emsim.runner import RunConfig, RunResult, TRAJECTORIES, run
 from emsim.sensor import SensorNoise
@@ -35,81 +35,80 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--layers", default="elevation", help="comma-separated layers to export")
     p.add_argument("--out", type=Path, default=None, help="directory for PNG plots")
+    p.add_argument(
+        "--plots",
+        default="comparison",
+        help="comma-separated: comparison, layers, surface, convergence, filmstrip, all. "
+             "convergence and filmstrip need a moving trajectory and record per-step state.",
+    )
     return p
 
 
-def make_config(args, scene: str) -> RunConfig:
+ALL_PLOTS = ("comparison", "layers", "surface", "convergence", "filmstrip")
+
+#: Plots built from per-step snapshots, which the run has to be told to keep.
+PER_STEP_PLOTS = {"convergence", "filmstrip"}
+
+
+def resolve_plots(spec: str) -> List[str]:
+    requested = [s.strip() for s in spec.split(",") if s.strip()]
+    if "all" in requested:
+        return list(ALL_PLOTS)
+    unknown = set(requested) - set(ALL_PLOTS)
+    if unknown:
+        raise SystemExit(f"unknown plot(s) {sorted(unknown)}; available: {list(ALL_PLOTS) + ['all']}")
+    return requested
+
+
+def make_config(args, scene: str, plots: Sequence[str] = ()) -> RunConfig:
     return RunConfig(
         scene=scene,
         trajectory=args.trajectory,
         n_steps=args.steps,
         resolution=args.resolution,
         map_length=args.map_length,
+        record_per_step=bool(set(plots) & PER_STEP_PLOTS),
         noise=SensorNoise(
             range_relative_std=args.range_noise, dropout=args.dropout, seed=args.seed
         ),
     )
 
 
-def plot(result: RunResult, path: Path, radius: Optional[float]) -> None:
-    """Write a ground-truth / estimate / error triptych."""
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    est = result.layers["elevation"]
-    truth = result.ground_truth
-    error = est - truth
-    if radius is not None:
-        outside = ~result.mask(radius)
-        error = np.where(outside, np.nan, error)
-
-    half = result.cell_n * result.config.resolution / 2.0
-    extent = [
-        result.center[1] - half, result.center[1] + half,
-        result.center[0] - half, result.center[0] + half,
-    ]
-    # Row 0 is max x and column 0 is max y, so flip both axes for a plot with
-    # x up and y left -- the usual top-down view.
-    def show(ax, data, title, **kw):
-        im = ax.imshow(data, extent=extent, origin="upper", **kw)
-        ax.set_title(title, fontsize=9)
-        ax.set_xlabel("y [m]")
-        ax.invert_xaxis()
-        plt.colorbar(im, ax=ax, fraction=0.046)
-
-    vmin, vmax = np.nanmin(truth), np.nanmax(truth)
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.4))
-    show(axes[0], truth, "ground truth (ray cast)", vmin=vmin, vmax=vmax, cmap="terrain")
-    show(axes[1], est, "elevation_mapping_cupy", vmin=vmin, vmax=vmax, cmap="terrain")
-    lim = max(0.02, float(np.nanpercentile(np.abs(error), 99))) if np.isfinite(error).any() else 0.02
-    show(axes[2], error, "estimate - truth [m]", vmin=-lim, vmax=lim, cmap="coolwarm")
-    axes[0].set_ylabel("x [m]")
-
-    err = result.error("elevation", radius=radius)
-    fig.suptitle(f"{result.scene.name}: {result.scene.description}\n{err}", fontsize=9)
-    fig.tight_layout()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=120)
-    plt.close(fig)
+def write_plots(result: RunResult, out: Path, kinds: Sequence[str], radius: Optional[float]) -> List[Path]:
+    """Render the requested figures for one run."""
+    written = []
+    for kind in kinds:
+        target = out / f"{result.scene.name}_{kind}.png"
+        if kind == "comparison":
+            written.append(plotting.plot_comparison(result, target, radius))
+        elif kind == "layers":
+            written.append(plotting.plot_layers(result, target))
+        elif kind == "surface":
+            written.append(plotting.plot_surface(result, target, radius))
+        elif kind == "convergence":
+            written.append(plotting.plot_convergence(result, target))
+        elif kind == "filmstrip":
+            written.append(plotting.plot_filmstrip(result, target))
+    return written
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     scene_names = sorted(scenes.SCENES) if args.all else [args.scene]
     layers = [s.strip() for s in args.layers.split(",") if s.strip()]
+    plots = resolve_plots(args.plots) if args.out is not None else []
+    if "layers" in plots and len(layers) == 1:
+        # A one-layer sheet is not worth drawing; show what the map offers.
+        layers = ["elevation", "variance", "is_valid", "upper_bound", "inpaint", "smooth"]
 
     rows = []
     for name in scene_names:
-        result = run(make_config(args, name), layers=layers)
+        result = run(make_config(args, name, plots), layers=layers)
         err: MapError = result.error("elevation", radius=args.radius)
         stats = result.timings.summary()
         rows.append((name, err, stats, int(np.mean(result.n_points))))
-        if args.out is not None:
-            out = args.out / f"{name}.png"
-            plot(result, out, args.radius)
-            print(f"wrote {out}")
+        for path in write_plots(result, args.out, plots, args.radius):
+            print(f"wrote {path}")
 
     width = max(len(n) for n in scene_names)
     print(f"\ntrajectory={args.trajectory} steps={args.steps} "

@@ -24,9 +24,50 @@ pixi run test-sim
 pixi run sim --all --out sim/report
 ```
 
-The CLI prints an accuracy table and, with `--out`, writes a ground-truth /
-estimate / error triptych per scene. `pixi run sim --help` lists the knobs
-(scene, trajectory, resolution, map size, depth noise, dropout).
+`pixi run sim --help` lists the knobs (scene, trajectory, resolution, map size,
+depth noise, dropout).
+
+## Visualising it
+
+Two ways in, both writing PNGs — nothing needs a display.
+
+**From the CLI**, with `--out DIR` and `--plots`:
+
+```bash
+pixi run sim --scene mixed --trajectory line --steps 12 --plots all --out sim/report
+```
+
+**From the tests**, with `--viz-dir`. Every test that has something worth
+looking at emits a figure named after itself, so you get a picture of exactly
+what was asserted:
+
+```bash
+pixi run pytest sim/tests --viz-dir sim/report
+```
+
+| Plot | Shows | Test it illustrates |
+| --- | --- | --- |
+| `comparison` | Ground truth, estimate, signed error side by side | `test_elevation_accuracy_per_scene` |
+| `layers` | Every exported layer on one sheet | `test_is_valid_marks_exactly_the_observed_cells` |
+| `surface` | Ground truth vs estimate as 3D surfaces | `test_step_heights_are_resolved`, `test_slope_gradient_is_recovered` |
+| `convergence` | Coverage and error against frame number | `test_map_converges_as_frames_accumulate` |
+| `filmstrip` | The robot-centric window sliding across a fixed world | `test_world_fixed_features_keep_their_world_position` |
+
+`convergence` and `filmstrip` need per-step snapshots, so they imply
+`RunConfig(record_per_step=True)`; the CLI sets that for you when you ask for
+them. They also want a moving trajectory (`--trajectory line` or `circle`) to
+show anything interesting.
+
+To add a figure to a test, take the `viz` fixture and call it — it is a no-op
+unless `--viz-dir` was passed, so it is safe to leave in place:
+
+```python
+def test_something(sim_run, viz):
+    result = sim_run("key", cfg)
+    viz("comparison", result, radius=2.5)
+```
+
+`kind` is any `plot_*` function in `emsim/plotting.py`.
 
 ## Layout
 
@@ -37,6 +78,7 @@ estimate / error triptych per scene. `pixi run sim --help` lists the knobs
 | `emsim/sensor.py` | Pinhole depth camera via `mj_multiRay`, with optional noise |
 | `emsim/runner.py` | Drives `ElevationMap` over a trajectory, collects timings |
 | `emsim/metrics.py` | RMSE / MAE / bias / p95 / coverage against ground truth |
+| `emsim/plotting.py` | Figures: comparison, layers, surface, convergence, filmstrip |
 | `emsim/cli.py` | `python -m emsim.cli` |
 
 Only `runner.py` needs CuPy. Scenes, the sensor and the ground-truth sampler are

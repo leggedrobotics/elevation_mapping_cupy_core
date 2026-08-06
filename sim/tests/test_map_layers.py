@@ -40,8 +40,9 @@ def test_layer_exports_with_the_right_shape(layer, mapped):
     assert np.isfinite(data).any(), f"layer '{layer}' is entirely NaN"
 
 
-def test_is_valid_marks_exactly_the_observed_cells(mapped):
+def test_is_valid_marks_exactly_the_observed_cells(mapped, viz):
     """``is_valid`` is the mask that ``elevation`` is NaN-filled against."""
+    viz("layers", mapped)
     is_valid = mapped.layers["is_valid"] > 0.5
     observed = np.isfinite(mapped.layers["elevation"])
     np.testing.assert_array_equal(is_valid, observed)
