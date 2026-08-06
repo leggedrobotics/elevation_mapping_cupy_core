@@ -164,10 +164,36 @@ of 20 deg takes coverage to ~85%:
 | `mid360` | 30 deg | 74.4% | 0.0124 | 5 117 |
 | `avia` | 25 deg | 96.5% | 0.0094 | 20 642 |
 
-The `cpu` backend is `mj_multiRay` underneath, the same call the depth camera
-uses, so it buys scan patterns rather than speed. `mujoco-lidar` also offers
-`warp`, `taichi` and `jax` backends (`lidar_backend=`) which are much faster on
-large scans, but each needs its own package installed.
+### Ray-cast backends
+
+`lidar_backend` defaults to `"auto"`: Warp when CUDA is available, `cpu`
+otherwise. The `cpu` backend is `mj_multiRay` underneath — the same call the
+depth camera uses — so it buys scan patterns rather than speed. `taichi` and
+`jax` are also selectable but need their own packages.
+
+Per-scan cost of a VLP-32 (120 000 rays) on an Orin, and the resulting maps are
+identical to float32 precision:
+
+| scene | cpu | warp | |
+| --- | --- | --- | --- |
+| `flat` | 27.9 ms | 11.0 ms | 2.5x |
+| `boxes` | 36.4 ms | 12.8 ms | 2.9x |
+| `wall` | 33.2 ms | 11.3 ms | 2.9x |
+| `gap` | 38.3 ms | 10.4 ms | 3.7x |
+| `steps` | 40.3 ms | 10.6 ms | 3.8x |
+| `mixed` | 133.3 ms | 14.9 ms | 8.9x |
+| `rough` | 204.0 ms | 15.6 ms | 13.1x |
+| `slope` | **11 016 ms** | 12.5 ms | **884x** |
+
+`slope` is the case that makes Warp effectively mandatory rather than merely
+nice. MuJoCo's CPU height-field ray cast walks the grid cell by cell, so a ray
+skimming along a flat height field crosses thousands of cells before it exits —
+and a 360-degree LiDAR aims a whole ring's worth of rays exactly like that. At
+11 s per scan a 24-frame run takes four and a half minutes on CPU and under a
+second on Warp. Warp builds a BVH instead, so it barely notices.
+
+Warp compiles its kernels once (~14 s), then loads them from `~/.cache/warp` in
+under 2 ms.
 
 [mjlidar]: https://github.com/discoverse-dev/MuJoCo-LiDAR
 
