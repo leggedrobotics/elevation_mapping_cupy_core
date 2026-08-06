@@ -29,7 +29,7 @@ from typing import Callable, Dict, Optional, Tuple
 import numpy as np
 
 from emsim import scenes
-from emsim.sensor import DepthCapture, SensorNoise, rot_y, rot_z
+from emsim.sensor import DepthCapture, SensorNoise, as_rotation_matrix, rot_y
 
 
 class LidarUnavailable(RuntimeError):
@@ -173,14 +173,15 @@ class LidarSensor:
         return self._rays_per_scan
 
     def pose_for(
-        self, base_position: np.ndarray, yaw: float
+        self, base_position: np.ndarray, rotation
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Sensor pose for a base at ``base_position`` with heading ``yaw``.
+        """Sensor pose for a base at ``base_position`` with orientation ``rotation``.
 
         Unlike the camera there is no optical-frame convention here: the LiDAR
-        frame is the body frame (x forward, y left, z up), optionally tilted.
+        frame is the body frame (x forward, y left, z up), plus the mount tilt.
+        ``rotation`` is anything :func:`~emsim.sensor.as_rotation_matrix` takes.
         """
-        R_wb = rot_z(yaw)
+        R_wb = as_rotation_matrix(rotation)
         R_ws = R_wb @ rot_y(np.deg2rad(self.tilt_down_deg))
         t_ws = np.asarray(base_position, dtype=np.float64) + R_wb @ np.asarray(
             self.mount_offset_body, dtype=np.float64

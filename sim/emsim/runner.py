@@ -21,11 +21,60 @@ import numpy as np
 from emsim import scenes
 from emsim.heightmap import GroundTruthHeightmap, map_cell_centers, radial_mask
 from emsim.metrics import MapError, Timings, compare_maps
-from emsim.sensor import CameraIntrinsics, DepthSensor, SensorNoise, rot_z
+from emsim.sensor import CameraIntrinsics, DepthSensor, SensorNoise, rpy_to_matrix
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "elevation_mapping_cupy" / "configs"
 
-TRAJECTORIES = ("static", "spin", "line", "circle")
+TRAJECTORIES = ("static", "spin", "line", "circle", "figure8")
+
+
+@dataclass
+class BodyMotion:
+    """Base oscillation laid on top of a nominal path.
+
+    A legged base does not glide: it bobs vertically, sways laterally, and rolls
+    and pitches with the gait. That matters here because the sensor is bolted to
+    it, so every frame arrives from a slightly different attitude -- which is
+    what makes the map's pose handling worth testing. Defaults are all zero, so
+    this changes nothing unless asked for.
+
+    Attributes:
+        bob: Vertical amplitude [m].
+        sway: Lateral amplitude [m], in the body frame.
+        roll_deg: Roll amplitude [deg].
+        pitch_deg: Pitch amplitude [deg].
+        cycles: Oscillations over the whole trajectory.
+    """
+
+    bob: float = 0.0
+    sway: float = 0.0
+    roll_deg: float = 0.0
+    pitch_deg: float = 0.0
+    cycles: float = 4.0
+
+    @property
+    def enabled(self) -> bool:
+        return any((self.bob, self.sway, self.roll_deg, self.pitch_deg))
+
+    @classmethod
+    def walking(cls, scale: float = 1.0) -> "BodyMotion":
+        """Amplitudes in the range a trotting quadruped actually shows."""
+        return cls(
+            bob=0.04 * scale,
+            sway=0.03 * scale,
+            roll_deg=4.0 * scale,
+            pitch_deg=3.0 * scale,
+            cycles=6.0,
+        )
+
+
+@dataclass
+class BasePose:
+    """A full 6-DoF base pose along a trajectory."""
+
+    position: np.ndarray  # (3,) world
+    rotation: np.ndarray  # (3, 3) body -> world
+    rpy: np.ndarray  # (3,) roll, pitch, yaw [rad], for reporting
 
 
 @dataclass
@@ -45,6 +94,7 @@ class RunConfig:
     path_radius: float = 1.5  # "circle": radius
     start_xy: Tuple[float, float] = (0.0, 0.0)
     base_height: float = 0.8  # sensor carrier height above the terrain
+    body_motion: BodyMotion = field(default_factory=BodyMotion)
 
     # Sensor. The tilt/FOV pair is chosen so the top image row still points
     # 15 deg below the horizon: near-horizontal rays skim across height fields
@@ -90,6 +140,7 @@ class StepRecord:
 
     index: int
     base_position: np.ndarray
+    base_rpy: np.ndarray  # (3,) roll, pitch, yaw of the base [rad]
     center: np.ndarray  # (3,) map centre
     elevation: np.ndarray  # exported elevation layer
     ground_truth: np.ndarray  # ground truth for that same window
@@ -106,7 +157,7 @@ class RunResult:
     cell_n: int  # side length of every exported layer
     layers: Dict[str, np.ndarray]
     ground_truth: np.ndarray  # same layout as layers["elevation"]
-    poses: List[Tuple[np.ndarray, float]]
+    poses: List[BasePose]
     n_points: List[int]
     timings: Timings
     sensor_backend: Optional[str] = None  # concrete LiDAR backend, None for the camera
@@ -132,30 +183,71 @@ class RunResult:
         return map_cell_centers(tuple(self.center[:2]), self.cell_n, self.config.resolution)
 
 
-def make_trajectory(cfg: RunConfig, scene: scenes.Scene) -> List[Tuple[np.ndarray, float]]:
-    """Build the list of ``(base_position, yaw)`` poses for a run."""
+def nominal_path(cfg: RunConfig) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The ``(x, y, yaw)`` path of a trajectory, before any body motion."""
     n = cfg.n_steps
     x0, y0 = cfg.start_xy
     if cfg.trajectory == "static":
-        xs, ys = np.full(n, x0), np.full(n, y0)
-        yaws = np.zeros(n)
-    elif cfg.trajectory == "spin":
-        xs, ys = np.full(n, x0), np.full(n, y0)
-        yaws = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
-    elif cfg.trajectory == "line":
-        xs = x0 + np.linspace(0.0, cfg.path_length, n)
-        ys = np.full(n, y0)
-        yaws = np.zeros(n)
-    elif cfg.trajectory == "circle":
+        return np.full(n, x0), np.full(n, y0), np.zeros(n)
+    if cfg.trajectory == "spin":
+        return np.full(n, x0), np.full(n, y0), np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
+    if cfg.trajectory == "line":
+        return x0 + np.linspace(0.0, cfg.path_length, n), np.full(n, y0), np.zeros(n)
+    if cfg.trajectory == "circle":
         theta = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
-        xs = x0 + cfg.path_radius * np.cos(theta)
-        ys = y0 + cfg.path_radius * np.sin(theta)
-        yaws = theta + np.pi  # face the centre of the circle
-    else:
-        raise ValueError(f"unknown trajectory '{cfg.trajectory}'; available: {TRAJECTORIES}")
+        return (
+            x0 + cfg.path_radius * np.cos(theta),
+            y0 + cfg.path_radius * np.sin(theta),
+            theta + np.pi,  # face the centre of the circle
+        )
+    if cfg.trajectory == "figure8":
+        # A lemniscate: translation and rotation together, with the yaw rate
+        # reversing sign twice per lap, so the map shifts in every direction
+        # while the heading sweeps back and forth.
+        t = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
+        r = cfg.path_radius
+        xs = x0 + r * np.sin(t)
+        ys = y0 + r * np.sin(t) * np.cos(t)
+        # Heading follows the path tangent.
+        dx = np.gradient(xs)
+        dy = np.gradient(ys)
+        return xs, ys, np.arctan2(dy, dx)
+    raise ValueError(f"unknown trajectory '{cfg.trajectory}'; available: {TRAJECTORIES}")
 
-    zs = scene.analytic_height(xs, ys) + cfg.base_height
-    return [(np.array([x, y, z], dtype=np.float64), float(yaw)) for x, y, z, yaw in zip(xs, ys, zs, yaws)]
+
+def make_trajectory(cfg: RunConfig, scene: scenes.Scene) -> List[BasePose]:
+    """Build the full 6-DoF pose sequence for a run.
+
+    The nominal path sets ``(x, y, yaw)`` and the terrain sets the nominal
+    height; :class:`BodyMotion` then adds the vertical bob, lateral sway and
+    roll/pitch a legged base actually shows. Sway is applied in the body frame,
+    so on a curved path it pushes the base sideways relative to its heading
+    rather than along a fixed world axis.
+    """
+    xs, ys, yaws = nominal_path(cfg)
+    n = cfg.n_steps
+    motion = cfg.body_motion
+
+    # Quarter-cycle offsets keep bob, sway, roll and pitch out of phase, so the
+    # attitude traces a loop rather than a line.
+    phase = 2.0 * np.pi * motion.cycles * np.arange(n) / max(n, 1)
+    bob = motion.bob * np.sin(phase)
+    sway = motion.sway * np.sin(phase + np.pi / 2)
+    rolls = np.deg2rad(motion.roll_deg) * np.sin(phase + np.pi / 4)
+    pitches = np.deg2rad(motion.pitch_deg) * np.sin(phase + 3 * np.pi / 4)
+
+    xs = xs - sway * np.sin(yaws)  # +y_body is left
+    ys = ys + sway * np.cos(yaws)
+    zs = scene.analytic_height(xs, ys) + cfg.base_height + bob
+
+    return [
+        BasePose(
+            position=np.array([x, y, z], dtype=np.float64),
+            rotation=rpy_to_matrix(roll, pitch, yaw),
+            rpy=np.array([roll, pitch, yaw], dtype=np.float64),
+        )
+        for x, y, z, roll, pitch, yaw in zip(xs, ys, zs, rolls, pitches, yaws)
+    ]
 
 
 def make_sensor(cfg: RunConfig, model, data, robot_id: int):
@@ -218,9 +310,9 @@ def make_parameter(cfg: RunConfig):
     return param
 
 
-def ground_truth_bounds(poses: Sequence[Tuple[np.ndarray, float]], map_length: float, margin: float = 0.5):
+def ground_truth_bounds(poses: Sequence[BasePose], map_length: float, margin: float = 0.5):
     """Region the ground-truth sampler must cover for a given trajectory."""
-    xy = np.array([p[0][:2] for p in poses])
+    xy = np.array([p.position[:2] for p in poses])
     half = map_length / 2.0 + margin
     return (
         float(xy[:, 0].min() - half),
@@ -285,22 +377,23 @@ def run(
     import mujoco
 
     robot_mocap = scenes.mocap_id(model, scenes.ROBOT_BODY)
-    for step, (base_pos, yaw) in enumerate(poses):
+    quat = np.empty(4, dtype=np.float64)
+    for step, pose in enumerate(poses):
+        base_pos = pose.position
         # Park the (visual) robot shell so it is excluded consistently.
         data.mocap_pos[robot_mocap] = base_pos
-        data.mocap_quat[robot_mocap] = np.array(
-            [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
-        )
+        mujoco.mju_mat2Quat(quat, np.ascontiguousarray(pose.rotation).reshape(-1))
+        data.mocap_quat[robot_mocap] = quat
         mujoco.mj_forward(model, data)
 
-        R_wc, t_wc = sensor.pose_for(base_pos, yaw)
+        R_wc, t_wc = sensor.pose_for(base_pos, pose.rotation)
 
         t0 = time.perf_counter()
         capture = sensor.capture(R_wc, t_wc)
         sensor_ms.append((time.perf_counter() - t0) * 1e3)
         n_points.append(capture.points.shape[0])
 
-        em.move_to(base_pos, cp.asarray(rot_z(yaw), dtype=param.data_type))
+        em.move_to(base_pos, cp.asarray(pose.rotation, dtype=param.data_type))
 
         cp.cuda.Stream.null.synchronize()
         t0 = time.perf_counter()
@@ -329,6 +422,7 @@ def run(
                 StepRecord(
                     index=step,
                     base_position=base_pos.copy(),
+                    base_rpy=pose.rpy.copy(),
                     center=step_center,
                     elevation=elevation,
                     ground_truth=step_gt,

@@ -29,6 +29,12 @@ HFIELD_SPACING = 0.03
 # Half-extent of every height field (m). Beyond it the ground plane takes over.
 HFIELD_RADIUS = 5.0
 
+# Height-field scenes drop the ground plane this far so the plane and the flat
+# parts of the field are not coplanar, which otherwise z-fights in renders. It
+# is applied to the analytic surface as well, so ground truth stays consistent;
+# the field covers the whole tested area, so nothing else changes.
+HFIELD_GROUND_DROP = 0.01
+
 # Mocap body carrying the robot shell. Excluded from every ray cast.
 ROBOT_BODY = "robot"
 
@@ -251,6 +257,7 @@ def slope(angle_deg: float = 15.0, x0: float = 0.8, height_cap: float = 1.0) -> 
         name="slope",
         description=f"{angle_deg:.0f} deg ramp starting at x = {x0:.2f} m, capped at {height_cap:.2f} m.",
         hfield=HField(name="slope", radius_x=HFIELD_RADIUS, radius_y=HFIELD_RADIUS, fn=fn),
+        ground_z=-HFIELD_GROUND_DROP,
     )
 
 
@@ -269,6 +276,7 @@ def rough(amplitude: float = 0.07) -> Scene:
         name="rough",
         description=f"Undulating sinusoidal terrain, peak-to-peak ~{2 * amplitude:.2f} m.",
         hfield=HField(name="rough", radius_x=HFIELD_RADIUS, radius_y=HFIELD_RADIUS, fn=fn),
+        ground_z=-HFIELD_GROUND_DROP,
     )
 
 
@@ -282,6 +290,7 @@ def mixed() -> Scene:
         description="Undulating ground with a staircase along +x and scattered boxes.",
         boxes=st.boxes + cl.boxes,
         hfield=base.hfield,
+        ground_z=-HFIELD_GROUND_DROP,
     )
 
 

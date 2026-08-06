@@ -197,6 +197,42 @@ under 2 ms.
 
 [mjlidar]: https://github.com/discoverse-dev/MuJoCo-LiDAR
 
+## Trajectories and body motion
+
+`RunConfig.trajectory` sets the nominal path:
+
+| kind | motion |
+| --- | --- |
+| `static` | fixed pose |
+| `spin` | rotate in place through a full turn |
+| `line` | translate along +x |
+| `circle` | translate and rotate together, facing the centre |
+| `figure8` | a lemniscate: heading sweeps back and forth, yaw rate reverses sign |
+
+`RunConfig.body_motion` then adds what a legged base actually does on top of
+that path — vertical bob, lateral sway (in the *body* frame, so it follows the
+heading), and roll/pitch. All amplitudes default to zero, so it changes nothing
+unless asked for:
+
+```python
+RunConfig(trajectory="circle", body_motion=BodyMotion.walking())
+```
+
+`BodyMotion.walking()` uses amplitudes a trotting quadruped shows: 4 cm bob,
+3 cm sway, 4 deg roll, 3 deg pitch, six cycles over the run. The four terms are
+quarter-cycle out of phase, so the attitude traces a loop instead of heaving up
+and down in lockstep.
+
+This matters because the sensor is bolted to the base: with body motion on,
+every frame arrives from a different attitude, so a pose-handling error cannot
+hide behind a constant offset. The full base rotation — not just heading — is
+what gets handed to `ElevationMap.move_to`.
+
+One caveat when reading amplitudes back: a sinusoid sampled at `n_steps` points
+does not generally land on its peaks. Six cycles over 24 steps samples every
+90 deg, so a term offset by 45 deg only ever reaches 0.707 of its amplitude.
+The tests bound the observed span rather than asserting the nominal value.
+
 ## Scenes
 
 | Scene | What it exercises |
@@ -289,6 +325,7 @@ loaded.
 | `test_sensor.py` | no | Camera intrinsics, pose conventions, range/dropout noise |
 | `test_lidar.py` | mixed | Scan patterns, frames, body exclusion, per-pattern accuracy |
 | `test_elevation_accuracy.py` | yes | Per-scene RMSE/p95/coverage; gradients; step heights; convergence; noise |
+| `test_trajectories.py` | mixed | Paths, body motion, mapping under full 6-DoF pose |
 | `test_map_shifting_sim.py` | yes | Centre tracking; world-fixed features survive shifting |
 | `test_map_layers.py` | yes | `is_valid`, `variance`, `time`, `upper_bound`, plugins, `clear` |
 | `test_performance.py` | yes | Ingestion throughput; no per-frame stalls |

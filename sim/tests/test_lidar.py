@@ -30,7 +30,7 @@ def make_lidar(built_scene, name="mixed", **kwargs):
 def test_every_pattern_produces_a_scan(pattern, built_scene):
     sensor = make_lidar(built_scene, pattern=pattern)
     assert sensor.n_rays > 100
-    R, t = sensor.pose_for(np.array([0.0, 0.0, 0.8]), yaw=0.0)
+    R, t = sensor.pose_for(np.array([0.0, 0.0, 0.8]), rotation=0.0)
     cap = sensor.capture(R, t)
     assert cap.points.shape[1] == 3
     assert cap.points.shape[0] > 100, f"{pattern} returned almost nothing"
@@ -42,7 +42,7 @@ def test_no_return_floats_above_the_terrain(pattern, built_scene):
     """Points are in the sensor frame; ``R @ p + t`` must land on or inside it."""
     scene, *_ = built_scene("mixed")
     sensor = make_lidar(built_scene, pattern=pattern, tilt_down_deg=20.0)
-    R, t = sensor.pose_for(np.array([0.0, 0.0, 0.8]), yaw=0.7)
+    R, t = sensor.pose_for(np.array([0.0, 0.0, 0.8]), rotation=0.7)
     world = sensor.capture(R, t).world_points
 
     # A hit on a vertical face has, in exact arithmetic, exactly the x or y of
@@ -68,7 +68,7 @@ def test_returns_sit_on_the_surface_of_smooth_terrain(pattern, built_scene):
     """
     scene, *_ = built_scene("rough")
     sensor = make_lidar(built_scene, "rough", pattern=pattern, tilt_down_deg=20.0)
-    R, t = sensor.pose_for(np.array([0.0, 0.0, 0.8]), yaw=0.7)
+    R, t = sensor.pose_for(np.array([0.0, 0.0, 0.8]), rotation=0.7)
     world = sensor.capture(R, t).world_points
 
     residual = np.abs(world[:, 2] - scene.analytic_height(world[:, 0], world[:, 1]))
@@ -78,7 +78,7 @@ def test_returns_sit_on_the_surface_of_smooth_terrain(pattern, built_scene):
 
 def test_ranges_match_point_norms(built_scene):
     sensor = make_lidar(built_scene, pattern="vlp32", tilt_down_deg=20.0)
-    R, t = sensor.pose_for(np.array([0.0, 0.0, 0.8]), yaw=0.0)
+    R, t = sensor.pose_for(np.array([0.0, 0.0, 0.8]), rotation=0.0)
     cap = sensor.capture(R, t)
     np.testing.assert_allclose(np.linalg.norm(cap.points, axis=1), cap.ranges, rtol=1e-4)
     assert cap.ranges.min() >= sensor.min_range
@@ -99,7 +99,7 @@ def test_robot_shell_is_excluded(built_scene):
                                  bodyexclude=robot_id, tilt_down_deg=20.0, max_range=12.0)
     included = lidar.LidarSensor(model=model, data=data, pattern="vlp32",
                                  bodyexclude=-1, tilt_down_deg=20.0, max_range=12.0)
-    R, t = excluded.pose_for(base, yaw=0.0)
+    R, t = excluded.pose_for(base, rotation=0.0)
     a, b = excluded.capture(R, t), included.capture(R, t)
 
     assert a.ranges.max() > 2.0, "the ground should be visible out to several metres"
@@ -118,7 +118,7 @@ def test_robot_shell_is_excluded(built_scene):
 def test_livox_patterns_are_non_repetitive(built_scene):
     """Successive Livox scans must differ -- that is the point of the rosette."""
     sensor = make_lidar(built_scene, pattern="mid360", tilt_down_deg=25.0)
-    R, t = sensor.pose_for(np.array([0.0, 0.0, 0.8]), yaw=0.0)
+    R, t = sensor.pose_for(np.array([0.0, 0.0, 0.8]), rotation=0.0)
     first, second = sensor.capture(R, t), sensor.capture(R, t)
     assert first.points.shape != second.points.shape or not np.allclose(
         first.points, second.points
@@ -127,14 +127,14 @@ def test_livox_patterns_are_non_repetitive(built_scene):
 
 def test_spinning_patterns_are_deterministic(built_scene):
     sensor = make_lidar(built_scene, pattern="vlp32", tilt_down_deg=20.0)
-    R, t = sensor.pose_for(np.array([0.0, 0.0, 0.8]), yaw=0.0)
+    R, t = sensor.pose_for(np.array([0.0, 0.0, 0.8]), rotation=0.0)
     np.testing.assert_array_equal(sensor.capture(R, t).points, sensor.capture(R, t).points)
 
 
 def test_pose_for_applies_yaw_and_tilt(built_scene):
     sensor = make_lidar(built_scene, pattern="vlp32", tilt_down_deg=30.0,
                         mount_offset_body=(0.25, 0.0, 0.1))
-    R, t = sensor.pose_for(np.array([1.0, 2.0, 0.8]), yaw=np.pi / 2)
+    R, t = sensor.pose_for(np.array([1.0, 2.0, 0.8]), rotation=np.pi / 2)
     # Facing +y, so the forward mount offset lands on +y and the z offset on z.
     np.testing.assert_allclose(t, [1.0, 2.25, 0.9], atol=1e-12)
     forward = R @ [1.0, 0.0, 0.0]  # body forward in world
@@ -144,7 +144,7 @@ def test_pose_for_applies_yaw_and_tilt(built_scene):
 def test_capture_reports_the_site_pose_it_used(built_scene):
     """The capture carries the pose MuJoCo actually placed, not the request."""
     sensor = make_lidar(built_scene, pattern="vlp32", tilt_down_deg=20.0)
-    R, t = sensor.pose_for(np.array([0.4, -0.3, 0.8]), yaw=1.1)
+    R, t = sensor.pose_for(np.array([0.4, -0.3, 0.8]), rotation=1.1)
     cap = sensor.capture(R, t)
     np.testing.assert_allclose(cap.t_wc, t, atol=1e-9)
     np.testing.assert_allclose(cap.R_wc, R, atol=1e-6)
@@ -156,7 +156,7 @@ def test_noise_is_applied_along_the_ray(built_scene):
     clean = make_lidar(built_scene, pattern="vlp32", tilt_down_deg=20.0)
     noisy = make_lidar(built_scene, pattern="vlp32", tilt_down_deg=20.0,
                        noise=SensorNoise(range_absolute_std=0.02, seed=11))
-    R, t = clean.pose_for(np.array([0.0, 0.0, 0.8]), yaw=0.0)
+    R, t = clean.pose_for(np.array([0.0, 0.0, 0.8]), rotation=0.0)
     a, b = clean.capture(R, t), noisy.capture(R, t)
 
     assert a.points.shape == b.points.shape
@@ -219,7 +219,7 @@ def test_warp_matches_cpu(pattern, built_scene):
     captures = {}
     for backend in ("cpu", "warp"):
         sensor = make_lidar(built_scene, pattern=pattern, backend=backend, tilt_down_deg=20.0)
-        captures[backend] = sensor.capture(*sensor.pose_for(base, yaw=0.7))
+        captures[backend] = sensor.capture(*sensor.pose_for(base, rotation=0.7))
 
     cpu, warp = captures["cpu"], captures["warp"]
     assert cpu.points.shape == warp.points.shape, "the two backends dropped different rays"
@@ -237,7 +237,7 @@ def test_warp_is_faster_than_cpu(built_scene):
     timings = {}
     for backend in ("cpu", "warp"):
         sensor = make_lidar(built_scene, pattern="os128", backend=backend, tilt_down_deg=20.0)
-        R, t = sensor.pose_for(base, yaw=0.0)
+        R, t = sensor.pose_for(base, rotation=0.0)
         sensor.capture(R, t)  # warm up: Warp compiles its kernels on first use
         start = time.perf_counter()
         for _ in range(3):

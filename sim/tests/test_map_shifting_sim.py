@@ -14,7 +14,7 @@ import pytest
 from conftest import requires_gpu
 from emsim.heightmap import map_cell_centers
 from emsim.metrics import compare_maps
-from emsim.runner import RunConfig, run
+from emsim.runner import BodyMotion, RunConfig, run
 
 pytestmark = requires_gpu
 
@@ -124,6 +124,20 @@ def test_world_fixed_features_keep_their_world_position(driven, viz):
             hits += 1
 
     assert hits > 40, f"only {hits} probe readings landed on observed cells"
+
+
+def test_shifting_is_correct_under_six_dof_motion():
+    """Roll, pitch and bob must not smear a world-fixed feature across the map."""
+    result = run(drive_config(scene="steps", body_motion=BodyMotion.walking()))
+    resolution = result.config.resolution
+    for step in result.steps:
+        delta = step.center[:2] - step.base_position[:2]
+        assert np.max(np.abs(delta)) <= resolution / 2 + 1e-6, f"step {step.index}"
+
+    late = [s for s in result.steps[4:] if s.error.n_valid > 200]
+    assert len(late) > 4
+    for step in late:
+        assert step.error.p95 < 0.06, f"step {step.index}: {step.error}"
 
 
 def test_driving_over_terrain_matches_a_stationary_sweep():

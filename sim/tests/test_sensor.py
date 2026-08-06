@@ -48,14 +48,14 @@ def test_body_from_optical_is_a_rotation():
 
 @pytest.mark.parametrize("tilt", [0.0, 20.0, 45.0, 80.0])
 def test_camera_tilt_sign_points_down(tilt):
-    R_wc, _ = camera_pose(np.zeros(3), yaw=0.0, tilt_down_deg=tilt)
+    R_wc, _ = camera_pose(np.zeros(3), rotation=0.0, tilt_down_deg=tilt)
     axis = R_wc @ [0.0, 0.0, 1.0]  # optical axis in world
     assert axis[2] == pytest.approx(-np.sin(np.deg2rad(tilt)), abs=1e-9)
     assert axis[0] == pytest.approx(np.cos(np.deg2rad(tilt)), abs=1e-9)
 
 
 def test_camera_pose_applies_yaw_to_the_mount_offset():
-    R_wc, t_wc = camera_pose(np.array([1.0, 2.0, 0.5]), yaw=np.pi / 2, tilt_down_deg=30.0,
+    R_wc, t_wc = camera_pose(np.array([1.0, 2.0, 0.5]), rotation=np.pi / 2, tilt_down_deg=30.0,
                              offset_body=(0.3, 0.0, 0.0))
     # Facing +y, so a 0.3 m forward mount offset lands at y + 0.3.
     np.testing.assert_allclose(t_wc, [1.0, 2.3, 0.5], atol=1e-12)
@@ -73,7 +73,7 @@ def test_depth_on_flat_ground_lands_on_the_plane(built_scene):
     _, model, data, robot_id = built_scene("flat")
     sensor = DepthSensor(model, data, CameraIntrinsics(64, 48, 60.0), max_range=8.0,
                          bodyexclude=robot_id)
-    R_wc, t_wc = camera_pose(np.array([0.0, 0.0, 0.8]), yaw=0.3, tilt_down_deg=45.0)
+    R_wc, t_wc = camera_pose(np.array([0.0, 0.0, 0.8]), rotation=0.3, tilt_down_deg=45.0)
     cap = sensor.capture(R_wc, t_wc)
 
     assert cap.points.shape[0] == sensor.n_rays, "every ray should reach the ground plane"
@@ -88,7 +88,7 @@ def test_depth_sees_terrain_relief(built_scene):
     scene, model, data, robot_id = built_scene("steps")
     sensor = DepthSensor(model, data, CameraIntrinsics(96, 72, 60.0), max_range=8.0,
                          bodyexclude=robot_id)
-    R_wc, t_wc = camera_pose(np.array([0.0, 0.0, 0.8]), yaw=0.0, tilt_down_deg=40.0)
+    R_wc, t_wc = camera_pose(np.array([0.0, 0.0, 0.8]), rotation=0.0, tilt_down_deg=40.0)
     world = sensor.capture(R_wc, t_wc).world_points
     surface = scene.analytic_height(world[:, 0], world[:, 1])
 
@@ -115,7 +115,7 @@ def test_max_range_truncates(built_scene):
     _, model, data, robot_id = built_scene("flat")
     sensor = DepthSensor(model, data, CameraIntrinsics(64, 48, 90.0), max_range=1.5,
                          bodyexclude=robot_id)
-    R_wc, t_wc = camera_pose(np.array([0.0, 0.0, 0.8]), yaw=0.0, tilt_down_deg=45.0)
+    R_wc, t_wc = camera_pose(np.array([0.0, 0.0, 0.8]), rotation=0.0, tilt_down_deg=45.0)
     cap = sensor.capture(R_wc, t_wc)
     assert 0 < cap.points.shape[0] < sensor.n_rays, "far rays should be dropped"
     assert cap.ranges.max() <= 1.5
@@ -131,7 +131,7 @@ def test_robot_body_does_not_occlude_itself(built_scene):
     mujoco.mj_forward(model, data)
 
     intr = CameraIntrinsics(48, 36, 60.0)
-    R_wc, t_wc = camera_pose(base, yaw=0.0, tilt_down_deg=45.0)
+    R_wc, t_wc = camera_pose(base, rotation=0.0, tilt_down_deg=45.0)
     excluded = DepthSensor(model, data, intr, bodyexclude=robot_id).capture(R_wc, t_wc)
     included = DepthSensor(model, data, intr, bodyexclude=-1).capture(R_wc, t_wc)
 
@@ -145,7 +145,7 @@ def test_robot_body_does_not_occlude_itself(built_scene):
 def test_dropout_thins_the_cloud_reproducibly(built_scene):
     _, model, data, robot_id = built_scene("flat")
     intr = CameraIntrinsics(80, 60, 60.0)
-    R_wc, t_wc = camera_pose(np.array([0.0, 0.0, 0.8]), yaw=0.0, tilt_down_deg=45.0)
+    R_wc, t_wc = camera_pose(np.array([0.0, 0.0, 0.8]), rotation=0.0, tilt_down_deg=45.0)
 
     def capture(seed):
         noise = SensorNoise(dropout=0.3, seed=seed)
@@ -160,7 +160,7 @@ def test_dropout_thins_the_cloud_reproducibly(built_scene):
 def test_range_noise_perturbs_depth_without_bias(built_scene):
     _, model, data, robot_id = built_scene("flat")
     intr = CameraIntrinsics(80, 60, 60.0)
-    R_wc, t_wc = camera_pose(np.array([0.0, 0.0, 0.8]), yaw=0.0, tilt_down_deg=45.0)
+    R_wc, t_wc = camera_pose(np.array([0.0, 0.0, 0.8]), rotation=0.0, tilt_down_deg=45.0)
 
     clean = DepthSensor(model, data, intr, bodyexclude=robot_id).capture(R_wc, t_wc)
     noisy = DepthSensor(

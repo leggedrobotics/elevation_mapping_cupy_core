@@ -13,7 +13,7 @@ import pytest
 
 from conftest import requires_gpu
 from emsim.metrics import compare_maps
-from emsim.runner import RunConfig, run
+from emsim.runner import BodyMotion, RunConfig, run
 from emsim.sensor import SensorNoise
 
 pytestmark = requires_gpu
@@ -149,6 +149,23 @@ def test_dropout_costs_coverage_not_accuracy(sim_run):
     err = result.error("elevation", radius=RADIUS)
     assert err.coverage > 0.75, f"70% dropout should still cover most cells: {err}"
     assert err.rmse < 0.02, f"{err}"
+
+
+def test_accuracy_holds_while_walking(sim_run):
+    """The stationary sweeps hold the base level; this one does not.
+
+    Translation, heading change, vertical bob and roll/pitch all at once, which
+    is how the sensor actually arrives on a legged robot.
+    """
+    result = sim_run(
+        "walk::mixed",
+        spin_config("mixed", trajectory="circle", n_steps=24, path_radius=1.2,
+                    body_motion=BodyMotion.walking()),
+    )
+    err = result.error("elevation", radius=2.0)
+    assert err.coverage > 0.65, f"{err}"
+    assert err.rmse <= 0.030, f"{err}"
+    assert abs(err.bias) < 0.02, f"attitude oscillation should not bias the surface: {err}"
 
 
 def test_ground_truth_window_tracks_the_map_centre(sim_run):

@@ -42,6 +42,38 @@ def rot_y(pitch: float) -> np.ndarray:
     return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
 
 
+def rot_x(roll: float) -> np.ndarray:
+    c, s = np.cos(roll), np.sin(roll)
+    return np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
+
+
+def rpy_to_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
+    """Body-to-world rotation from roll-pitch-yaw, applied Z-Y-X.
+
+    Positive pitch tilts the nose down, matching ``tilt_down_deg`` elsewhere in
+    this module (a right-handed rotation about +y takes +x toward -z).
+    """
+    return rot_z(yaw) @ rot_y(pitch) @ rot_x(roll)
+
+
+def as_rotation_matrix(rotation) -> np.ndarray:
+    """Coerce a yaw angle, an ``(r, p, y)`` triple or a 3x3 matrix to a matrix.
+
+    Sensor poses are most readable as a bare yaw in tests and as a full
+    orientation in a 6-DoF trajectory, so both are accepted.
+    """
+    array = np.asarray(rotation, dtype=np.float64)
+    if array.shape == ():
+        return rot_z(float(array))
+    if array.shape == (3,):
+        return rpy_to_matrix(*array)
+    if array.shape == (3, 3):
+        return array
+    raise ValueError(
+        f"rotation must be a yaw angle, an (r, p, y) triple or a 3x3 matrix, got shape {array.shape}"
+    )
+
+
 @dataclass(frozen=True)
 class CameraIntrinsics:
     """Pinhole intrinsics derived from a vertical field of view."""
@@ -154,13 +186,14 @@ class DepthSensor:
     def n_rays(self) -> int:
         return self._dirs_cam.shape[0]
 
-    def pose_for(self, base_position: np.ndarray, yaw: float) -> Tuple[np.ndarray, np.ndarray]:
-        """Sensor pose for a base at ``base_position`` with heading ``yaw``.
+    def pose_for(self, base_position: np.ndarray, rotation) -> Tuple[np.ndarray, np.ndarray]:
+        """Sensor pose for a base at ``base_position`` with body orientation ``rotation``.
 
-        Mirrors :meth:`emsim.lidar.LidarSensor.pose_for`, so the runner can
-        drive either sensor through the same two calls.
+        ``rotation`` is anything :func:`as_rotation_matrix` accepts. Mirrors
+        :meth:`emsim.lidar.LidarSensor.pose_for`, so the runner can drive either
+        sensor through the same two calls.
         """
-        return camera_pose(base_position, yaw, self.tilt_down_deg, self.mount_offset_body)
+        return camera_pose(base_position, rotation, self.tilt_down_deg, self.mount_offset_body)
 
     def capture(self, R_wc: np.ndarray, t_wc: np.ndarray) -> DepthCapture:
         """Cast the full pixel bundle from pose ``(R_wc, t_wc)``.
@@ -207,15 +240,17 @@ class DepthSensor:
 
 def camera_pose(
     base_position: np.ndarray,
-    yaw: float,
+    rotation,
     tilt_down_deg: float = 35.0,
     offset_body: Tuple[float, float, float] = (0.2, 0.0, 0.0),
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Camera pose for a base at ``base_position`` with heading ``yaw``.
+    """Camera pose for a base at ``base_position`` with orientation ``rotation``.
 
     Args:
         base_position: ``(3,)`` robot base origin in world coordinates.
-        yaw: Heading in radians.
+        rotation: Body orientation -- a yaw angle, an ``(r, p, y)`` triple or a
+            3x3 body-to-world matrix. Base roll and pitch carry through to the
+            camera, on top of its own fixed mount tilt.
         tilt_down_deg: Downward tilt of the optical axis. Positive looks at the
             ground; 0 looks at the horizon. (A right-handed rotation about the
             body +y axis takes +x toward -z, so this is ``rot_y(+tilt)``.)
@@ -224,7 +259,7 @@ def camera_pose(
     Returns:
         ``(R_wc, t_wc)`` -- optical-to-world rotation and camera origin.
     """
-    R_wb = rot_z(yaw)
+    R_wb = as_rotation_matrix(rotation)
     R_wc = R_wb @ rot_y(np.deg2rad(tilt_down_deg)) @ R_BODY_FROM_OPTICAL
     t_wc = np.asarray(base_position, dtype=np.float64) + R_wb @ np.asarray(offset_body, dtype=np.float64)
     return R_wc, t_wc

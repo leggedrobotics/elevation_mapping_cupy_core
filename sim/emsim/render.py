@@ -36,6 +36,13 @@ VIEWS: Sequence[Tuple[str, float, float, float, Tuple[float, float, float]]] = (
     ("oblique", 145.0, -11.0, 6.0, (0.9, 0.0, 0.15)),
     ("front", 180.0, -7.0, 5.0, (1.2, 0.0, 0.2)),
     ("top", 90.0, -89.0, 9.0, (0.5, 0.0, 0.0)),
+    # Profile along the x axis. Terrain here varies mostly with x, so a side-on
+    # camera silhouettes the height against the sky -- the only view in which
+    # the slope's gradient and the staircase's treads are unambiguous.
+    ("side", 90.0, -4.0, 9.0, (1.6, 0.0, 0.35)),
+    # Almost at ground level. `rough` is only ~0.12 m peak-to-peak over 8 m and
+    # simply does not read from any elevated camera.
+    ("graze", 165.0, -1.5, 4.0, (1.0, 0.0, 0.08)),
 )
 
 _MESA_ENV = {
