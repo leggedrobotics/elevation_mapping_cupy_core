@@ -19,3 +19,6 @@ sim/report/
 .idea/
 .vscode/
 
+
+# Agent worktrees
+.claude/worktrees/
