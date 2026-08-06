@@ -146,23 +146,26 @@ Two pieces need care on aarch64:
 
 If the traversability filter cannot be loaded, `ElevationMap` logs a warning and
 runs without it. `RunResult.traversability_enabled` reports the state, and the
-tests that depend on it skip rather than pass vacuously.
+one test that genuinely depends on the filter (`test_traversability_layer`)
+skips rather than passing vacuously.
 
-## A latent defect worth knowing about
+## A defect this harness caught
 
 `update_map_with_kernel` ends with `self.update_normal(self.traversability_input)`,
-but `traversability_input` is only ever populated inside the
-`if self.traversability_filter is not None:` branch immediately above. When the
-filter loads — the configuration this environment sets up, and the normal one —
-the normals are correct: the harness recovers 15.18° on a 15° ramp and
-`normal_z = 0.9999` on flat ground.
+but a local change had moved the dilation that fills `traversability_input`
+inside the `if self.traversability_filter is not None:` branch. With the filter
+loaded the normals were fine; with it unavailable that buffer stayed all zeros
+and `normal_x`/`normal_y`/`normal_z` silently became `(0, 0, 1)` everywhere
+regardless of terrain — an undeclared dependency of the normal layers on the
+traversability filter, with no warning beyond the one about the filter itself.
 
-When the filter is *unavailable*, though, that buffer stays all zeros and
-`normal_x`/`normal_y`/`normal_z` silently become `(0, 0, 1)` everywhere
-regardless of terrain, with no warning beyond the one about the filter itself.
-So the normal layers have an undeclared dependency on the traversability filter.
-`tests/test_map_layers.py` skips its two normals tests in that case rather than
-asserting against known-bad output.
+The dilation does not depend on the learned filter, and upstream runs it
+unconditionally, so it now sits outside the guard and only the
+`traversability_filter(...)` call remains behind it — fixed separately in #4,
+which this branch assumes. The two normals tests in `tests/test_map_layers.py`
+assert the real behaviour in both configurations: the harness recovers ~15° on a
+15° ramp and `normal_z ≈ 1.0` on flat ground whether or not the filter is
+loaded.
 
 ## Tests
 
