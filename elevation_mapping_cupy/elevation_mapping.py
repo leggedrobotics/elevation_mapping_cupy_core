@@ -461,17 +461,21 @@ class ElevationMap:
             if self.param.enable_overlap_clearance:
                 self.clear_overlap_map(t)
 
-            # Only update traversability if filter is available (weights loaded)
-            if self.traversability_filter is not None:
-                self.traversability_input *= 0.0
-                self.dilation_filter_kernel(
-                    self.elevation_map[5],
-                    self.elevation_map[2] + self.elevation_map[6],
-                    self.traversability_input,
-                    self.traversability_mask_dummy,
-                    size=(self.cell_n * self.cell_n),
-                )
+            # Dilate the upper-bound surface. This does not depend on the learned
+            # filter: it also feeds update_normal below, so it must run even when
+            # the traversability filter is unavailable, or the normal layers are
+            # computed over an all-zero surface.
+            self.traversability_input *= 0.0
+            self.dilation_filter_kernel(
+                self.elevation_map[5],
+                self.elevation_map[2] + self.elevation_map[6],
+                self.traversability_input,
+                self.traversability_mask_dummy,
+                size=(self.cell_n * self.cell_n),
+            )
 
+            # Only compute traversability if the filter is available (weights loaded)
+            if self.traversability_filter is not None:
                 traversability = self.traversability_filter(self.traversability_input)
                 self.elevation_map[3][3:-3, 3:-3] = traversability.reshape(
                     (traversability.shape[2], traversability.shape[3])
