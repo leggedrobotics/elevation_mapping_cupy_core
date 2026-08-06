@@ -109,6 +109,7 @@ class RunResult:
     poses: List[Tuple[np.ndarray, float]]
     n_points: List[int]
     timings: Timings
+    sensor_backend: Optional[str] = None  # concrete LiDAR backend, None for the camera
     traversability_enabled: bool = False
     steps: List[StepRecord] = field(default_factory=list)
     sampler: Optional[GroundTruthHeightmap] = None
@@ -359,6 +360,7 @@ def run(
         poses=poses,
         n_points=n_points,
         timings=Timings(np.array(sensor_ms), np.array(input_ms), np.array(export_ms)),
+        sensor_backend=getattr(sensor, "backend", None),
         traversability_enabled=em.traversability_filter is not None,
         steps=step_records,
         sampler=sampler,

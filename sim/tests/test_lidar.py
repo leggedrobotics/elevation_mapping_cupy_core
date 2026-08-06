@@ -187,6 +187,25 @@ def test_auto_backend_resolves(built_scene):
     assert sensor.backend == resolved, "the sensor must record the concrete backend"
 
 
+def test_default_backend_is_warp_when_cuda_is_present(built_scene, capsys):
+    """Guards against a silent fall back to the CPU path.
+
+    Everything here runs on whatever ``auto`` resolves to, and CPU ray casting
+    is up to 884x slower on height-field scenes -- so a fallback that nobody
+    notices is the failure worth catching.
+    """
+    sensor = make_lidar(built_scene, pattern="vlp32")  # no backend: take the default
+    with capsys.disabled():
+        print(f"\n  LiDAR ray-cast backend in use: {sensor.backend}")
+    if lidar.warp_available():
+        assert sensor.backend == "warp", (
+            "warp-lang reports a CUDA device but the default backend resolved to "
+            f"'{sensor.backend}'"
+        )
+    else:
+        assert sensor.backend == "cpu"
+
+
 needs_warp = pytest.mark.skipif(
     not lidar.warp_available(), reason="warp-lang with a CUDA device is not available"
 )
@@ -270,6 +289,9 @@ def test_lidar_drives_the_map_to_ground_truth(pattern):
             map_length=10.0,
             max_range=12.0,
         )
+    )
+    assert result.sensor_backend == lidar.resolve_backend("auto"), (
+        f"the run used '{result.sensor_backend}' rather than the default backend"
     )
     err = result.error("elevation", radius=2.5)
     assert err.coverage >= min_coverage, f"{pattern}: {err}"
