@@ -84,20 +84,43 @@ Two wrinkles worth knowing about:
   FOV keep the top image row 15° below the horizon, which is worth roughly a
   13× speedup on height-field scenes and costs no usable coverage.
 
-## Known gaps in this environment
+## CUDA on Jetson
 
-- **Traversability filter disabled.** `get_filter_torch` calls `.cuda()`, and
-  there is no CUDA-capable PyTorch wheel for this Jetson in a conda environment,
-  so `weights.dat` fails to load and `ElevationMap` runs without the learned
-  filter. This matches the existing unit-test suite. `RunResult.traversability_enabled`
-  reports the state and the affected tests skip rather than pass vacuously.
-- **Normal layers are not tested.** `update_map_with_kernel` feeds
-  `update_normal` the `traversability_input` buffer, which is only populated
-  inside the `traversability_filter is not None` branch. With the filter off that
-  buffer stays all zeros, so `normal_x`/`normal_y`/`normal_z` come out as
-  `(0, 0, 1)` everywhere regardless of terrain. The two tests in
-  `tests/test_map_layers.py` assert the correct behaviour and skip until that is
-  fixed — they pass no judgement on the current output.
+The environment is self-contained — no `sudo`, no writing into `/usr/local/cuda`.
+The one external prerequisite is JetPack itself (this was developed against
+JetPack 6 / R36.4.7, CUDA 12.6), which supplies the driver and CUDA runtime.
+
+Two pieces need care on aarch64:
+
+- **CuPy** comes from stock PyPI (`cupy-cuda12x`), whose aarch64 wheels work
+  against the JetPack CUDA runtime.
+- **PyTorch** — needed only by the traversability filter, which calls `.cuda()`
+  — has no CUDA-capable aarch64 wheel on stock PyPI. It comes from NVIDIA's
+  Jetson index, `https://pypi.jetson-ai-lab.io/jp6/cu126`, scoped to the
+  `linux-aarch64` target so the manifest still resolves on x86. That wheel links
+  against cuDSS, which JetPack does not ship, so `nvidia-cudss-cu12` is pulled
+  from PyPI and its lib directory added to `LD_LIBRARY_PATH` in
+  `[target.linux-aarch64.activation.env]`.
+
+If the traversability filter cannot be loaded, `ElevationMap` logs a warning and
+runs without it. `RunResult.traversability_enabled` reports the state, and the
+tests that depend on it skip rather than pass vacuously.
+
+## A latent defect worth knowing about
+
+`update_map_with_kernel` ends with `self.update_normal(self.traversability_input)`,
+but `traversability_input` is only ever populated inside the
+`if self.traversability_filter is not None:` branch immediately above. When the
+filter loads — the configuration this environment sets up, and the normal one —
+the normals are correct: the harness recovers 15.18° on a 15° ramp and
+`normal_z = 0.9999` on flat ground.
+
+When the filter is *unavailable*, though, that buffer stays all zeros and
+`normal_x`/`normal_y`/`normal_z` silently become `(0, 0, 1)` everywhere
+regardless of terrain, with no warning beyond the one about the filter itself.
+So the normal layers have an undeclared dependency on the traversability filter.
+`tests/test_map_layers.py` skips its two normals tests in that case rather than
+asserting against known-bad output.
 
 ## Tests
 

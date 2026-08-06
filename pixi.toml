@@ -21,6 +21,20 @@ opencv-python-headless = "*"
 shapely = "*"
 elevation-mapping-cupy-core = { path = ".", editable = true }
 
+# The traversability filter runs on torch and calls .cuda(), so it needs a
+# CUDA-enabled build. Stock PyPI aarch64 wheels are CPU-only / SBSA; JetPack
+# builds come from NVIDIA's Jetson index. Scoped to aarch64 so the manifest
+# still resolves on x86 hosts, where stock PyPI wheels are already CUDA-capable.
+[target.linux-aarch64.pypi-dependencies]
+torch = { version = "*", index = "https://pypi.jetson-ai-lab.io/jp6/cu126" }
+# The JetPack torch wheel links against cuDSS, which JetPack does not ship.
+# Taking it from PyPI keeps the environment self-contained -- no sudo, no
+# writing into /usr/local/cuda.
+nvidia-cudss-cu12 = "==0.7.1.4"
+
+[target.linux-64.pypi-dependencies]
+torch = "*"
+
 [activation.env]
 # Keep ~/.local/lib/pythonX.Y/site-packages out of the env: stray pytest plugins
 # installed there get auto-loaded and break collection.
@@ -32,6 +46,13 @@ CUDA_HOME = "/usr/local/cuda"
 MUJOCO_GL = "disable"
 # The simulation harness lives outside the shipped package.
 PYTHONPATH = "$PIXI_PROJECT_ROOT/sim"
+
+[target.linux-aarch64.activation.env]
+# The JetPack torch wheel resolves cuDSS through the dynamic linker rather than
+# torch's pip-preload path, so the wheel's lib directory has to be on the
+# search path. The env layout is fixed by this manifest (default environment,
+# python 3.10). JetPack's own CUDA runtime supplies cuSPARSELt and friends.
+LD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/.pixi/envs/default/lib/python3.10/site-packages/nvidia/cu12/lib:/usr/local/cuda/targets/aarch64-linux/lib:$LD_LIBRARY_PATH"
 
 [tasks]
 test = "pytest elevation_mapping_cupy/tests -q"

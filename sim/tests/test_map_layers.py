@@ -125,17 +125,19 @@ def test_only_visibility_cleanup_downgrades_a_measured_cell():
     assert flagged_measured(enable_cleanup=True) > 0, "cleanup should reclaim some cells"
 
 
+#: The normal layers have an undeclared dependency on the traversability filter:
 #: ``update_map_with_kernel`` feeds ``update_normal`` the ``traversability_input``
 #: buffer, which is only ever filled inside the ``traversability_filter is not
-#: None`` branch. With the filter disabled that buffer stays all zeros, so every
-#: normal comes out (0, 0, 1) whatever the terrain. These tests assert the
-#: correct behaviour and skip until that coupling is fixed.
+#: None`` branch. With the filter loaded the normals are correct; without it that
+#: buffer stays all zeros and every normal silently becomes (0, 0, 1). Skip
+#: rather than assert against known-bad output.
 def _require_working_normals(result):
     if not result.traversability_enabled:
         pytest.skip(
             "normal layers are fed from traversability_input, which is only populated "
             "when the traversability filter is enabled; with the filter disabled every "
-            "normal is (0, 0, 1) regardless of terrain"
+            "normal is (0, 0, 1) regardless of terrain. Install a CUDA-capable torch "
+            "(see sim/README.md) to exercise these."
         )
 
 

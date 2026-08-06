@@ -42,7 +42,8 @@ elevation = em.get_map_with_name("elevation")
 ## Development and simulation testing
 
 A [pixi](https://pixi.sh) environment pins the full toolchain (CuPy, MuJoCo,
-pytest):
+CUDA-enabled PyTorch, pytest) — no `sudo`, no system installs beyond JetPack /
+the CUDA runtime itself:
 
 ```bash
 pixi run test-all
