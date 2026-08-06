@@ -1,0 +1,40 @@
+[workspace]
+name = "elevation-mapping-cupy-core"
+version = "0.1.0"
+description = "Dev + MuJoCo simulation environment for elevation_mapping_cupy_core"
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64"]
+
+[dependencies]
+python = "3.10.*"
+pip = "*"
+numpy = "<2"
+scipy = "*"
+pytest = "*"
+matplotlib = "*"
+
+[pypi-dependencies]
+mujoco = ">=3.2"
+simple-parsing = "*"
+"ruamel.yaml" = "*"
+opencv-python-headless = "*"
+shapely = "*"
+elevation-mapping-cupy-core = { path = ".", editable = true }
+
+[activation.env]
+# Keep ~/.local/lib/pythonX.Y/site-packages out of the env: stray pytest plugins
+# installed there get auto-loaded and break collection.
+PYTHONNOUSERSITE = "1"
+CUDA_PATH = "/usr/local/cuda"
+CUDA_HOME = "/usr/local/cuda"
+# The harness only uses MuJoCo ray casting (CPU). No GL context is ever needed,
+# and importing one on a headless Jetson fails, so disable it outright.
+MUJOCO_GL = "disable"
+# The simulation harness lives outside the shipped package.
+PYTHONPATH = "$PIXI_PROJECT_ROOT/sim"
+
+[tasks]
+test = "pytest elevation_mapping_cupy/tests -q"
+test-sim = "pytest sim/tests -q"
+test-all = "pytest elevation_mapping_cupy/tests sim/tests -q"
+sim = "python -m emsim.cli"

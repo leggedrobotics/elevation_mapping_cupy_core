@@ -10,6 +10,10 @@ dist/
 # Virtual environments
 .venv/
 venv/
+.pixi/
+
+# Simulation output
+sim/report/
 
 # IDE / tooling
 .idea/
