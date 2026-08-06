@@ -29,8 +29,15 @@ HFIELD_SPACING = 0.03
 # Half-extent of every height field (m). Beyond it the ground plane takes over.
 HFIELD_RADIUS = 5.0
 
-# Mocap body carrying the (virtual) sensor. Excluded from every ray cast.
+# Mocap body carrying the robot shell. Excluded from every ray cast.
 ROBOT_BODY = "robot"
+
+# A second, geom-free mocap body carrying the LiDAR site. mujoco_lidar reads the
+# sensor pose from a site in the model rather than taking it as an argument, so
+# there has to be something in the scene to pose. It holds no geoms, so it can
+# never occlude anything or perturb the depth-camera and ground-truth paths.
+LIDAR_BODY = "lidar_mount"
+LIDAR_SITE = "lidar_site"
 
 
 @dataclass(frozen=True)
@@ -134,6 +141,9 @@ class Scene:
     <body name="{ROBOT_BODY}" mocap="true" pos="0 0 1">
       <geom name="robot_shell" type="box" size="0.3 0.16 0.12" rgba="0.85 0.25 0.2 1"
             contype="0" conaffinity="0"/>
+    </body>
+    <body name="{LIDAR_BODY}" mocap="true" pos="0 0 1">
+      <site name="{LIDAR_SITE}" pos="0 0 0" size="0.02" rgba="0.2 0.8 0.9 1"/>
     </body>
   </worldbody>
 </mujoco>
@@ -287,7 +297,24 @@ def build_model(scene: Scene):
 
 
 def robot_body_id(model) -> int:
-    """Body id of the sensor carrier, for exclusion from ray casts."""
+    """Body id of the robot shell, for exclusion from ray casts."""
     import mujoco
 
     return mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, ROBOT_BODY)
+
+
+def mocap_id(model, body_name: str) -> int:
+    """Index into ``data.mocap_pos`` / ``data.mocap_quat`` for a mocap body.
+
+    Mocap arrays are indexed by mocap id, not body id, and the scene has more
+    than one mocap body -- so this lookup is not optional.
+    """
+    import mujoco
+
+    body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+    if body < 0:
+        raise KeyError(f"no body named '{body_name}' in this model")
+    mid = int(model.body_mocapid[body])
+    if mid < 0:
+        raise ValueError(f"body '{body_name}' is not a mocap body")
+    return mid

@@ -16,7 +16,16 @@ from emsim.heightmap import (
     radial_mask,
 )
 from emsim.metrics import MapError, Timings, compare_maps
-from emsim.scenes import SCENES, Box, HField, Scene, build_model, make_scene, robot_body_id
+from emsim.scenes import (
+    SCENES,
+    Box,
+    HField,
+    Scene,
+    build_model,
+    make_scene,
+    mocap_id,
+    robot_body_id,
+)
 from emsim.sensor import CameraIntrinsics, DepthCapture, DepthSensor, SensorNoise, camera_pose
 
 __all__ = [
@@ -38,6 +47,10 @@ __all__ = [
     "compare_maps",
     "make_scene",
     "map_cell_centers",
+    "mocap_id",
     "radial_mask",
     "robot_body_id",
 ]
+
+# emsim.lidar is deliberately not imported here: it is an optional backend and
+# importing it eagerly would drag `mujoco-lidar` into every consumer.

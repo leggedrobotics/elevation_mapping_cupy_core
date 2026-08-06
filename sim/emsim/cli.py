@@ -15,6 +15,7 @@ from typing import List, Optional, Sequence
 import numpy as np
 
 from emsim import plotting, scenes
+from emsim.lidar import PATTERNS as LIDAR_PATTERNS
 from emsim.metrics import MapError
 from emsim.runner import RunConfig, RunResult, TRAJECTORIES, run
 from emsim.sensor import SensorNoise
@@ -25,6 +26,18 @@ def build_parser() -> argparse.ArgumentParser:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--scene", default="mixed", choices=sorted(scenes.SCENES), help="terrain to map")
     p.add_argument("--all", action="store_true", help="run every scene in the catalogue")
+    p.add_argument(
+        "--preview",
+        action="store_true",
+        help="draw the scene and one frame from each sensor, then exit (no mapping, no GPU)",
+    )
+    p.add_argument("--sensor", default="camera", choices=("camera", "lidar"))
+    p.add_argument("--lidar-pattern", default="vlp32", choices=list(LIDAR_PATTERNS),
+                   help="LiDAR scan pattern when --sensor lidar")
+    p.add_argument("--lidar-tilt", type=float, default=20.0,
+                   help="downward LiDAR mount tilt [deg]")
+    p.add_argument("--lidar-backend", default="cpu", choices=("cpu", "warp", "taichi", "jax"),
+                   help="mujoco-lidar backend; non-cpu needs the matching extra installed")
     p.add_argument("--trajectory", default="spin", choices=TRAJECTORIES)
     p.add_argument("--steps", type=int, default=24, help="number of frames")
     p.add_argument("--resolution", type=float, default=0.04, help="map resolution [m]")
@@ -68,6 +81,10 @@ def make_config(args, scene: str, plots: Sequence[str] = ()) -> RunConfig:
         resolution=args.resolution,
         map_length=args.map_length,
         record_per_step=bool(set(plots) & PER_STEP_PLOTS),
+        sensor=args.sensor,
+        lidar_pattern=args.lidar_pattern,
+        lidar_tilt_down_deg=args.lidar_tilt,
+        lidar_backend=args.lidar_backend,
         noise=SensorNoise(
             range_relative_std=args.range_noise, dropout=args.dropout, seed=args.seed
         ),
@@ -92,9 +109,50 @@ def write_plots(result: RunResult, out: Path, kinds: Sequence[str], radius: Opti
     return written
 
 
+def preview_scene(name: str, out: Path, resolution: float = 0.05, half_extent: float = 4.0) -> Path:
+    """Draw a scene and one frame from each sensor. No mapping, no GPU."""
+    import mujoco
+
+    from emsim.heightmap import GroundTruthHeightmap
+    from emsim.sensor import CameraIntrinsics, DepthSensor
+
+    scene = scenes.make_scene(name)
+    model, data = scenes.build_model(scene)
+    robot_id = scenes.robot_body_id(model)
+    base = np.array([0.0, 0.0, 0.8])
+    data.mocap_pos[scenes.mocap_id(model, scenes.ROBOT_BODY)] = base
+    mujoco.mj_forward(model, data)
+
+    bounds = (-half_extent, half_extent, -half_extent, half_extent)
+    sampler = GroundTruthHeightmap(model, data, bounds, resolution, bodyexclude=robot_id)
+
+    camera = DepthSensor(model, data, CameraIntrinsics(160, 120, 60.0),
+                         max_range=8.0, bodyexclude=robot_id)
+    captures = [("depth camera", camera.capture(*camera.pose_for(base, 0.0)))]
+
+    from emsim import lidar as lidar_mod
+
+    if lidar_mod.is_available():
+        unit = lidar_mod.LidarSensor(model=model, data=data, pattern="vlp32",
+                                     tilt_down_deg=20.0, max_range=12.0, bodyexclude=robot_id)
+        captures.append(("lidar vlp32 (one scan)", unit.capture(*unit.pose_for(base, 0.0))))
+
+    return plotting.plot_scene_preview(
+        scene, sampler, out / f"{name}_scene.png", captures=captures, base_position=base
+    )
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     scene_names = sorted(scenes.SCENES) if args.all else [args.scene]
+
+    if args.preview:
+        if args.out is None:
+            raise SystemExit("--preview needs --out DIR")
+        for name in scene_names:
+            print(f"wrote {preview_scene(name, args.out)}")
+        return 0
+
     layers = [s.strip() for s in args.layers.split(",") if s.strip()]
     plots = resolve_plots(args.plots) if args.out is not None else []
     if "layers" in plots and len(layers) == 1:
@@ -111,7 +169,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"wrote {path}")
 
     width = max(len(n) for n in scene_names)
-    print(f"\ntrajectory={args.trajectory} steps={args.steps} "
+    print(f"\nsensor={args.sensor}"
+          + (f" ({args.lidar_pattern}, tilt {args.lidar_tilt:.0f} deg)" if args.sensor == "lidar" else "")
+          + f"  trajectory={args.trajectory} steps={args.steps} "
           f"map={args.map_length} m @ {args.resolution} m  scored within r <= {args.radius} m\n")
     print(f"{'scene':<{width}}  {'cover':>6}  {'rmse':>7}  {'mae':>7}  {'bias':>8}  "
           f"{'p95':>7}  {'pts/frame':>9}  {'input':>9}")

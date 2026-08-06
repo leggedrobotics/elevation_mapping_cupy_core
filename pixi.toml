@@ -15,6 +15,9 @@ matplotlib = "*"
 
 [pypi-dependencies]
 mujoco = ">=3.2"
+# Optional sensor backend: real LiDAR scan patterns (Livox, Velodyne, Ouster).
+# The base package is pure Python over MuJoCo; GPU backends are extras.
+mujoco-lidar = ">=0.3"
 simple-parsing = "*"
 "ruamel.yaml" = "*"
 opencv-python-headless = "*"

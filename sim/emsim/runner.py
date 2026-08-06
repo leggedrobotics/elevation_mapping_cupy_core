@@ -21,7 +21,7 @@ import numpy as np
 from emsim import scenes
 from emsim.heightmap import GroundTruthHeightmap, map_cell_centers, radial_mask
 from emsim.metrics import MapError, Timings, compare_maps
-from emsim.sensor import CameraIntrinsics, DepthSensor, SensorNoise, camera_pose, rot_z
+from emsim.sensor import CameraIntrinsics, DepthSensor, SensorNoise, rot_z
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "elevation_mapping_cupy" / "configs"
 
@@ -49,6 +49,7 @@ class RunConfig:
     # Sensor. The tilt/FOV pair is chosen so the top image row still points
     # 15 deg below the horizon: near-horizontal rays skim across height fields
     # for metres and dominate ray-cast cost without adding usable coverage.
+    sensor: str = "camera"  # "camera" or "lidar"
     cam_width: int = 160
     cam_height: int = 120
     cam_fovy_deg: float = 60.0
@@ -56,6 +57,15 @@ class RunConfig:
     cam_offset_body: Tuple[float, float, float] = (0.2, 0.0, 0.0)
     max_range: float = 6.0
     noise: SensorNoise = field(default_factory=SensorNoise)
+
+    # LiDAR backend (cfg.sensor == "lidar"); see emsim.lidar.PATTERNS.
+    # A level-mounted spinning unit puts most of its rings above the horizon and
+    # covers only ~12% of a 2.5 m disc; 20 deg of downward tilt takes that to
+    # ~85%, which is what a ground-mapping mount is actually for.
+    lidar_pattern: str = "vlp32"
+    lidar_backend: str = "cpu"
+    lidar_tilt_down_deg: float = 20.0
+    lidar_offset_body: Tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     # Mapping behaviour (mirrors Parameter fields of the same name)
     enable_visibility_cleanup: bool = True
@@ -147,6 +157,40 @@ def make_trajectory(cfg: RunConfig, scene: scenes.Scene) -> List[Tuple[np.ndarra
     return [(np.array([x, y, z], dtype=np.float64), float(yaw)) for x, y, z, yaw in zip(xs, ys, zs, yaws)]
 
 
+def make_sensor(cfg: RunConfig, model, data, robot_id: int):
+    """Build the sensor named by ``cfg.sensor``.
+
+    Both kinds answer ``pose_for(base_position, yaw)`` and
+    ``capture(R, t) -> DepthCapture``, so the run loop is identical either way.
+    """
+    if cfg.sensor == "camera":
+        return DepthSensor(
+            model,
+            data,
+            intrinsics=cfg.intrinsics,
+            max_range=cfg.max_range,
+            bodyexclude=robot_id,
+            noise=cfg.noise,
+            tilt_down_deg=cfg.cam_tilt_down_deg,
+            mount_offset_body=cfg.cam_offset_body,
+        )
+    if cfg.sensor == "lidar":
+        from emsim.lidar import LidarSensor
+
+        return LidarSensor(
+            model=model,
+            data=data,
+            pattern=cfg.lidar_pattern,
+            max_range=cfg.max_range,
+            bodyexclude=robot_id,
+            backend=cfg.lidar_backend,
+            tilt_down_deg=cfg.lidar_tilt_down_deg,
+            mount_offset_body=cfg.lidar_offset_body,
+            noise=cfg.noise,
+        )
+    raise ValueError(f"unknown sensor '{cfg.sensor}'; expected 'camera' or 'lidar'")
+
+
 def make_parameter(cfg: RunConfig):
     """Build a :class:`~elevation_mapping_cupy.parameter.Parameter` for a run."""
     from elevation_mapping_cupy.parameter import Parameter
@@ -225,14 +269,7 @@ def run(
             "the ground-truth lookup would no longer be cell-exact"
         )
 
-    sensor = DepthSensor(
-        model,
-        data,
-        intrinsics=cfg.intrinsics,
-        max_range=cfg.max_range,
-        bodyexclude=robot_id,
-        noise=cfg.noise,
-    )
+    sensor = make_sensor(cfg, model, data, robot_id)
 
     param = make_parameter(cfg)
     em = ElevationMap(param)
@@ -246,12 +283,16 @@ def run(
 
     import mujoco
 
+    robot_mocap = scenes.mocap_id(model, scenes.ROBOT_BODY)
     for step, (base_pos, yaw) in enumerate(poses):
-        # Park the (visual) sensor carrier so it is excluded consistently.
-        data.mocap_pos[0] = base_pos
+        # Park the (visual) robot shell so it is excluded consistently.
+        data.mocap_pos[robot_mocap] = base_pos
+        data.mocap_quat[robot_mocap] = np.array(
+            [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
+        )
         mujoco.mj_forward(model, data)
 
-        R_wc, t_wc = camera_pose(base_pos, yaw, cfg.cam_tilt_down_deg, cfg.cam_offset_body)
+        R_wc, t_wc = sensor.pose_for(base_pos, yaw)
 
         t0 = time.perf_counter()
         capture = sensor.capture(R_wc, t_wc)
@@ -263,11 +304,13 @@ def run(
         cp.cuda.Stream.null.synchronize()
         t0 = time.perf_counter()
         if capture.points.shape[0]:
+            # Use the pose the capture reports, not the one requested: the LiDAR
+            # backend reads its pose back from the site MuJoCo actually placed.
             em.input_pointcloud(
                 cp.asarray(capture.points),
                 ["x", "y", "z"],
-                cp.asarray(R_wc, dtype=param.data_type),
-                cp.asarray(t_wc, dtype=param.data_type),
+                cp.asarray(capture.R_wc, dtype=param.data_type),
+                cp.asarray(capture.t_wc, dtype=param.data_type),
                 cfg.position_noise,
                 cfg.orientation_noise,
             )

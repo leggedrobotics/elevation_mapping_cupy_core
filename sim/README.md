@@ -69,6 +69,23 @@ def test_something(sim_run, viz):
 
 `kind` is any `plot_*` function in `emsim/plotting.py`.
 
+### Seeing the scene itself
+
+```bash
+pixi run sim --all --preview --out sim/report
+```
+
+Draws each scene as a 3D surface and a top-down height map, plus one depth frame
+and one LiDAR scan overlaid as point clouds — which side by side is the clearest
+statement of how differently the two sensors sample the same ground. No GPU, no
+mapping.
+
+It is drawn from the scene's own geometry rather than rendered through OpenGL.
+There is no working GL stack here: the Jetson's EGL vendor driver is not visible
+to this environment's `libEGL`, and Mesa's software EGL fails too. For this
+purpose the height field plus the sensor returns is more informative than a
+shaded screenshot anyway.
+
 ## Layout
 
 | Module | Responsibility |
@@ -76,6 +93,7 @@ def test_something(sim_run, viz):
 | `emsim/scenes.py` | Procedural terrain as MJCF, each with a closed-form surface |
 | `emsim/heightmap.py` | Top-down ray-cast ground truth; map-grid alignment |
 | `emsim/sensor.py` | Pinhole depth camera via `mj_multiRay`, with optional noise |
+| `emsim/lidar.py` | Optional LiDAR backend: real scan patterns via `mujoco-lidar` |
 | `emsim/runner.py` | Drives `ElevationMap` over a trajectory, collects timings |
 | `emsim/metrics.py` | RMSE / MAE / bias / p95 / coverage against ground truth |
 | `emsim/plotting.py` | Figures: comparison, layers, surface, convergence, filmstrip |
@@ -83,6 +101,45 @@ def test_something(sim_run, viz):
 
 Only `runner.py` needs CuPy. Scenes, the sensor and the ground-truth sampler are
 pure CPU, so the majority of the tests run anywhere.
+
+## Sensors
+
+Two backends, same interface (`pose_for` then `capture` -> `DepthCapture`), so
+the run loop does not care which it holds. Pick with `RunConfig(sensor=...)` or
+`--sensor`.
+
+**`camera`** (default) -- a pinhole depth camera, dense and short-range. Every
+one of its 19 200 rays returns, all within about 3 m.
+
+**`lidar`** -- real scan patterns through [mujoco-lidar][mjlidar]: `vlp32`,
+`hdl64`, `os128`, `airy96`, Livox `mid360` / `avia` / `mid70` / `horizon`, and a
+plain `grid`. Sparse, ring-structured and long-range: a VLP-32 returns ~53 000
+of 120 000 rays, spread over tens of metres. Livox patterns are non-repetitive,
+so successive scans sample different points -- which is the property that makes
+them worth testing against.
+
+That difference is the point. The camera hands the map a dense patch; the LiDAR
+hands it sparse rings whose density falls off sharply with range, which is what
+the package actually receives on a robot.
+
+A level-mounted spinning unit puts most of its rings above the horizon and
+covers only ~12% of a 2.5 m disc. `lidar_tilt_down_deg` fixes that; the default
+of 20 deg takes coverage to ~85%:
+
+| pattern | tilt | coverage r<=2.5 m | rmse | returns/scan |
+| --- | --- | --- | --- | --- |
+| `vlp32` | 0 deg | 11.7% | 0.0230 | 26 250 |
+| `vlp32` | 20 deg | 85.4% | 0.0102 | 52 709 |
+| `os128` | 10 deg | 75.2% | 0.0075 | 106 922 |
+| `mid360` | 30 deg | 74.4% | 0.0124 | 5 117 |
+| `avia` | 25 deg | 96.5% | 0.0094 | 20 642 |
+
+The `cpu` backend is `mj_multiRay` underneath, the same call the depth camera
+uses, so it buys scan patterns rather than speed. `mujoco-lidar` also offers
+`warp`, `taichi` and `jax` backends (`lidar_backend=`) which are much faster on
+large scans, but each needs its own package installed.
+
+[mjlidar]: https://github.com/discoverse-dev/MuJoCo-LiDAR
 
 ## Scenes
 
@@ -173,7 +230,8 @@ loaded.
 | --- | --- | --- |
 | `test_scenes.py` | no | MJCF compiles; closed-form surfaces are what they claim |
 | `test_heightmap.py` | no | Ray-cast truth vs analytic; grid alignment; body exclusion |
-| `test_sensor.py` | no | Intrinsics, pose conventions, range/dropout noise |
+| `test_sensor.py` | no | Camera intrinsics, pose conventions, range/dropout noise |
+| `test_lidar.py` | mixed | Scan patterns, frames, body exclusion, per-pattern accuracy |
 | `test_elevation_accuracy.py` | yes | Per-scene RMSE/p95/coverage; gradients; step heights; convergence; noise |
 | `test_map_shifting_sim.py` | yes | Centre tracking; world-fixed features survive shifting |
 | `test_map_layers.py` | yes | `is_valid`, `variance`, `time`, `upper_bound`, plugins, `clear` |

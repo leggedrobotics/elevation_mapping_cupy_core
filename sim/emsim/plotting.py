@@ -200,6 +200,73 @@ def plot_filmstrip(result, path: Path, n: int = 5) -> Path:
     return path
 
 
+def plot_scene_preview(
+    scene,
+    sampler,
+    path: Path,
+    captures: Optional[Sequence] = None,
+    base_position: Optional[np.ndarray] = None,
+    stride: int = 3,
+) -> Path:
+    """What a scene actually looks like, and what the sensor gets back from it.
+
+    Drawn from the scene's own geometry via the ray-cast height field rather
+    than rendered through OpenGL -- there is no working GL stack in this
+    environment, and this shows more of what matters anyway: the terrain, the
+    sensor origin, and the returns the sensor produced.
+
+    Args:
+        scene: The :class:`~emsim.scenes.Scene`.
+        sampler: A :class:`~emsim.heightmap.GroundTruthHeightmap` over it.
+        captures: Optional ``(label, DepthCapture)`` pairs to overlay.
+        base_position: Robot base, drawn as a marker.
+    """
+    plt = _agg_pyplot()
+    X, Y = np.meshgrid(sampler.xs, sampler.ys, indexing="ij")
+    Z = sampler.heights
+    sl = (slice(None, None, stride), slice(None, None, stride))
+
+    n_extra = len(captures or ())
+    fig = plt.figure(figsize=(6.2 * (2 + n_extra), 5.2))
+    ncols = 2 + n_extra
+
+    ax = fig.add_subplot(1, ncols, 1, projection="3d")
+    ax.plot_surface(X[sl], Y[sl], Z[sl], cmap="terrain", linewidth=0, antialiased=False,
+                    rstride=1, cstride=1)
+    if base_position is not None:
+        ax.scatter(*base_position[:2], base_position[2], color="red", s=40, depthshade=False)
+    ax.set_title("terrain", fontsize=9)
+    ax.set_xlabel("x [m]"); ax.set_ylabel("y [m]"); ax.set_zlabel("z [m]")
+    ax.set_zlim(float(np.nanmin(Z)), max(float(np.nanmax(Z)), float(np.nanmin(Z)) + 0.2))
+    ax.view_init(elev=42, azim=-130)
+
+    ax = fig.add_subplot(1, ncols, 2)
+    im = ax.pcolormesh(Y, X, Z, cmap="terrain", shading="auto")
+    if base_position is not None:
+        ax.plot(base_position[1], base_position[0], "o", color="red", ms=7)
+    ax.set_title("top-down height [m]", fontsize=9)
+    ax.set_xlabel("y [m]"); ax.set_ylabel("x [m]")
+    ax.invert_xaxis()
+    ax.set_aspect("equal")
+    plt.colorbar(im, ax=ax, fraction=0.046)
+
+    for i, (label, capture) in enumerate(captures or ()):
+        ax = fig.add_subplot(1, ncols, 3 + i)
+        world = capture.world_points
+        sc = ax.scatter(world[:, 1], world[:, 0], c=world[:, 2], s=0.35,
+                        cmap="terrain", vmin=np.nanmin(Z), vmax=np.nanmax(Z))
+        ax.plot(capture.t_wc[1], capture.t_wc[0], "o", color="red", ms=7)
+        ax.set_title(f"{label}\n{world.shape[0]} returns of {capture.n_pixels} rays", fontsize=9)
+        ax.set_xlabel("y [m]"); ax.set_ylabel("x [m]")
+        ax.set_xlim(sampler.ys.max(), sampler.ys.min())
+        ax.set_ylim(sampler.xs.min(), sampler.xs.max())
+        ax.set_aspect("equal")
+        plt.colorbar(sc, ax=ax, fraction=0.046)
+
+    fig.suptitle(f"{scene.name}: {scene.description}", fontsize=10)
+    return _save(fig, path, plt)
+
+
 def plot_surface(result, path: Path, radius: Optional[float] = None, stride: int = 2) -> Path:
     """Ground truth and estimate as 3D surfaces -- the clearest view of relief."""
     plt = _agg_pyplot()

@@ -132,6 +132,8 @@ class DepthSensor:
         min_range: float = 0.05,
         bodyexclude: int = -1,
         noise: Optional[SensorNoise] = None,
+        tilt_down_deg: float = 45.0,
+        mount_offset_body: Tuple[float, float, float] = (0.2, 0.0, 0.0),
     ):
         self.model = model
         self.data = data
@@ -140,6 +142,8 @@ class DepthSensor:
         self.min_range = float(min_range)
         self.bodyexclude = int(bodyexclude)
         self.noise = noise or SensorNoise()
+        self.tilt_down_deg = float(tilt_down_deg)
+        self.mount_offset_body = mount_offset_body
 
         self._dirs_cam = self.intrinsics.ray_directions()
         n = self._dirs_cam.shape[0]
@@ -149,6 +153,14 @@ class DepthSensor:
     @property
     def n_rays(self) -> int:
         return self._dirs_cam.shape[0]
+
+    def pose_for(self, base_position: np.ndarray, yaw: float) -> Tuple[np.ndarray, np.ndarray]:
+        """Sensor pose for a base at ``base_position`` with heading ``yaw``.
+
+        Mirrors :meth:`emsim.lidar.LidarSensor.pose_for`, so the runner can
+        drive either sensor through the same two calls.
+        """
+        return camera_pose(base_position, yaw, self.tilt_down_deg, self.mount_offset_body)
 
     def capture(self, R_wc: np.ndarray, t_wc: np.ndarray) -> DepthCapture:
         """Cast the full pixel bundle from pose ``(R_wc, t_wc)``.
