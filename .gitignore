@@ -10,8 +10,17 @@ dist/
 # Virtual environments
 .venv/
 venv/
+.pixi/
+
+# Simulation output: rendered scenes, plots and reports
+sim/report/
+sim/**/*.png
+*_render_*.png
 
 # IDE / tooling
 .idea/
 .vscode/
 
+
+# Agent worktrees
+.claude/worktrees/
