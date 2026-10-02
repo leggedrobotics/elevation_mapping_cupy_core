@@ -19,15 +19,15 @@ def map_utils(
 ):
     util_preamble = string.Template(
         """
-        __device__ float16 clamp(float16 x, float16 min_x, float16 max_x) {
+        __device__ float clamp(float x, float min_x, float max_x) {
 
             return max(min(x, max_x), min_x);
         }
-        __device__ int get_x_idx(float16 x, float16 center) {
+        __device__ int get_x_idx(float x, float center) {
             int i = (x - center) / ${resolution} + 0.5 * ${width};
             return i;
         }
-        __device__ int get_y_idx(float16 y, float16 center) {
+        __device__ int get_y_idx(float y, float center) {
             int i = (y - center) / ${resolution} + 0.5 * ${height};
             return i;
         }
@@ -42,7 +42,7 @@ def map_utils(
             }
             return true;
         }
-        __device__ int get_idx(float16 x, float16 y, float16 center_x, float16 center_y) {
+        __device__ int get_idx(float x, float y, float center_x, float center_y) {
             int idx_x = clamp(get_x_idx(x, center_x), 0, ${width} - 1);
             int idx_y = clamp(get_y_idx(y, center_y), 0, ${height} - 1);
             return ${width} * idx_x + idx_y;
@@ -51,25 +51,25 @@ def map_utils(
             const int layer = ${width} * ${height};
             return layer * layer_n + idx;
         }
-        __device__ float transform_p(float16 x, float16 y, float16 z,
-                                     float16 r0, float16 r1, float16 r2, float16 t) {
+        __device__ float transform_p(float x, float y, float z,
+                                     float r0, float r1, float r2, float t) {
             return r0 * x + r1 * y + r2 * z + t;
         }
-        __device__ float point_noise(float16 x, float16 y, float16 z){
+        __device__ float point_noise(float x, float y, float z){
             // Noise model based on squared range in the sensor frame.
             // This avoids v=0 for flat ground points (z=0) and works for both
             // depth-camera optical frames (where z is range) and generic frames.
             return ${sensor_noise_factor} * (x * x + y * y + z * z);
         }
 
-        __device__ float point_sensor_distance(float16 x, float16 y, float16 z,
-                                               float16 sx, float16 sy, float16 sz) {
+        __device__ float point_sensor_distance(float x, float y, float z,
+                                               float sx, float sy, float sz) {
             float d = (x - sx) * (x - sx) + (y - sy) * (y - sy) + (z - sz) * (z - sz);
             return d;
         }
 
-        __device__ bool is_valid(float16 x, float16 y, float16 z,
-                               float16 sx, float16 sy, float16 sz) {
+        __device__ bool is_valid(float x, float y, float z,
+                               float sx, float sy, float sz) {
             float d = point_sensor_distance(x, y, z, sx, sy, sz);
             float dxy = max(sqrt(x * x + y * y) - ${ramped_height_range_b}, 0.0);
             if (d < ${min_valid_distance} * ${min_valid_distance}) {
@@ -83,13 +83,13 @@ def map_utils(
             }
         }
 
-        __device__ float ray_vector(float16 tx, float16 ty, float16 tz,
-                                    float16 px, float16 py, float16 pz,
-                                    float16& rx, float16& ry, float16& rz){
-            float16 vx = px - tx;
-            float16 vy = py - ty;
-            float16 vz = pz - tz;
-            float16 norm = sqrt(vx * vx + vy * vy + vz * vz);
+        __device__ float ray_vector(float tx, float ty, float tz,
+                                    float px, float py, float pz,
+                                    float& rx, float& ry, float& rz){
+            float vx = px - tx;
+            float vy = py - ty;
+            float vz = pz - tz;
+            float norm = sqrt(vx * vx + vy * vy + vz * vz);
             if (norm > 0) {
                 rx = vx / norm;
                 ry = vy / norm;
@@ -103,8 +103,8 @@ def map_utils(
             return norm;
         }
 
-        __device__ float inner_product(float16 x1, float16 y1, float16 z1,
-                                       float16 x2, float16 y2, float16 z2) {
+        __device__ float inner_product(float x1, float y1, float z1,
+                                       float x2, float y2, float z2) {
 
             float product = (x1 * x2 + y1 * y2 + z1 * z2);
             return product;
@@ -199,11 +199,11 @@ def add_points_kernel(
                 }
             }
             if (${enable_visibility_cleanup}) {
-                float16 ray_x, ray_y, ray_z;
-                float16 ray_length = ray_vector(t[0], t[1], t[2], x, y, z, ray_x, ray_y, ray_z);
-                ray_length = min(ray_length, (float16)${max_ray_length});
+                float ray_x, ray_y, ray_z;
+                float ray_length = ray_vector(t[0], t[1], t[2], x, y, z, ray_x, ray_y, ray_z);
+                ray_length = min(ray_length, (float)${max_ray_length});
                 int last_nidx = -1;
-                for (float16 s=${ray_step}; s < ray_length; s+=${ray_step}) {
+                for (float s=${ray_step}; s < ray_length; s+=${ray_step}) {
                     // iterate through ray
                     U nx = t[0] + ray_x * s;
                     U ny = t[1] + ray_y * s;
@@ -225,7 +225,7 @@ def add_points_kernel(
                     U nmap_is_upper = map[get_map_idx(nidx, 6)];
 
                     // If point is close or is farther away than ray length, skip.
-                    float16 d = (x - nx) * (x - nx) + (y - ny) * (y - ny) + (z - nz) * (z - nz);
+                    float d = (x - nx) * (x - nx) + (y - ny) * (y - ny) + (z - nz) * (z - nz);
                     if (d < 0.1 || !is_valid(x, y, z, t[0], t[1], t[2])) {continue;}
 
                     // If invalid, do upper bound check, then skip
@@ -582,26 +582,23 @@ def polygon_mask_kernel(width, height, resolution):
                 return idx_y;
             }
 
-            __device__ float16 clamp(float16 x, float16 min_x, float16 max_x) {
+            __device__ float clamp(float x, float min_x, float max_x) {
 
                 return max(min(x, max_x), min_x);
             }
-            __device__ float16 round(float16 x) {
-                return (int)x + (int)(2 * (x - (int)x));
-            }
-            __device__ int get_x_idx(float16 x, float16 center) {
+            __device__ int get_x_idx(float x, float center) {
                 const float resolution = ${resolution};
                 const float width = ${width};
                 int i = (x - center) / resolution + 0.5 * width;
                 return i;
             }
-            __device__ int get_y_idx(float16 y, float16 center) {
+            __device__ int get_y_idx(float y, float center) {
                 const float resolution = ${resolution};
                 const float height = ${height};
                 int i = (y - center) / resolution + 0.5 * height;
                 return i;
             }
-            __device__ int get_idx(float16 x, float16 y, float16 center_x, float16 center_y) {
+            __device__ int get_idx(float x, float y, float center_x, float center_y) {
                 int idx_x = clamp(get_x_idx(x, center_x), 0, ${width} - 1);
                 int idx_y = clamp(get_y_idx(y, center_y), 0, ${height} - 1);
                 return ${width} * idx_x + idx_y;
