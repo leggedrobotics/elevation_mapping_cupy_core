@@ -586,9 +586,6 @@ def polygon_mask_kernel(width, height, resolution):
 
                 return max(min(x, max_x), min_x);
             }
-            __device__ float round(float x) {
-                return (int)x + (int)(2 * (x - (int)x));
-            }
             __device__ int get_x_idx(float x, float center) {
                 const float resolution = ${resolution};
                 const float width = ${width};
