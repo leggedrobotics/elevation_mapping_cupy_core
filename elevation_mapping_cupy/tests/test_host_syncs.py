@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from elevation_mapping_cupy import elevation_mapping, parameter
+from elevation_mapping_cupy.plugins.min_filter import MinFilter
 
 _CONFIG_DIR = Path(__file__).parent.parent / "configs"
 _SPIN = cp.RawKernel(
@@ -121,6 +122,18 @@ def test_center_cpu_matches_the_device_center_and_float32_rounding(elmap):
     np.testing.assert_array_equal(elmap.center_cpu, cp.asnumpy(elmap.center))
 
 
+def test_min_filter_readout_does_not_wait_for_the_gpu(elmap):
+    rng = np.random.default_rng(0)
+    points = cp.asarray(np.stack([rng.uniform(-3, 3, 5000), rng.uniform(-3, 3, 5000), rng.uniform(-0.6, -0.4, 5000)], 1).astype(np.float32))
+    elmap.update_map_with_kernel(points, [], cp.eye(3, dtype=cp.float32), cp.asarray([0, 0, 0.5], cp.float32), 0.0, 0.0)
+
+    def readout():
+        elmap.plugin_manager.reset_layers()
+        elmap.get_map_with_name_ref("min_filter", return_cupy=True)
+
+    assert _cpu_ms_behind_gpu_work(readout, _busy_cycles(100)) < 50, "min_filter waited for queued GPU work"
+
+
 def test_push_pull_inpainting_does_not_wait_for_the_gpu(tmp_path):
     plugins = yaml.safe_load((_CONFIG_DIR / "plugin_config.yaml").read_text())
     plugins["inpainting"]["extra_params"]["method"] = "push_pull"
@@ -141,3 +154,37 @@ def test_push_pull_inpainting_does_not_wait_for_the_gpu(tmp_path):
         elmap.get_map_with_name_ref("inpaint", return_cupy=True)
 
     assert _cpu_ms_behind_gpu_work(inpaint, _busy_cycles(100)) < 50, "inpainting waited for queued GPU work"
+
+
+def _min_filter_reference(h, valid, d, iteration_n):
+    """Each pass fills invalid cells with the minimum valid value within d cells of the
+    previous pass and stops once every cell is valid. Like the kernel, neighbours are
+    flat-index offsets (they wrap across rows) and border cells are never sources."""
+    n = h.shape[0]
+    pad = d * (n + 1)
+    shifts = [n * dy + dx for dy in range(-d, d + 1) for dx in range(-d, d + 1)]
+    m, k = h.copy(), valid.copy()
+    for _ in range(iteration_n):
+        src = np.where(k > 0.5, m, np.inf)
+        src[[0, -1], :] = src[:, [0, -1]] = np.inf
+        flat = np.pad(src.ravel(), pad, constant_values=np.inf)
+        mins = np.min([flat[pad + s : pad + s + n * n] for s in shifts], axis=0).reshape(n, n)
+        fill = (valid < 0.5) & np.isfinite(mins)
+        m, k = np.where(fill, mins, m), np.where(fill, np.float32(0.6), k)
+        if (k > 0.5).all():
+            break
+    return np.where(k > 0.5, m, np.nan)
+
+
+@pytest.mark.parametrize("dilation_size, iteration_n", [(1, 5), (1, 30), (2, 30)])
+def test_min_filter_is_deterministic_and_spreads_dilation_size_per_pass(dilation_size, iteration_n):
+    rng = np.random.default_rng(1)
+    n = 64
+    h = rng.uniform(-1, 1, (n, n)).astype(np.float32)
+    valid = (rng.uniform(size=(n, n)) < 0.02).astype(np.float32)
+    em = cp.zeros((3, n, n), cp.float32)
+    em[0], em[2] = cp.asarray(h), cp.asarray(valid)
+    f = MinFilter(cell_n=n, dilation_size=dilation_size, iteration_n=iteration_n)
+    expected = _min_filter_reference(h, valid, dilation_size, iteration_n)
+    for _ in range(5):
+        np.testing.assert_array_equal(cp.asnumpy(f(em, [], None, [])), expected)
