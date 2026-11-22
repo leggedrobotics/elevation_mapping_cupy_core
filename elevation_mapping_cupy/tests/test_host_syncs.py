@@ -9,6 +9,8 @@ that returns well before the GPU is done did not wait.
 from pathlib import Path
 import time
 
+import yaml
+
 import cupy as cp
 import numpy as np
 import pytest
@@ -117,3 +119,25 @@ def test_center_cpu_matches_the_device_center_and_float32_rounding(elmap):
         np.testing.assert_array_equal(elmap.center_cpu, cp.asnumpy(elmap.center))
     elmap.move(np.array([0.26, -0.11, 0.02], np.float32))
     np.testing.assert_array_equal(elmap.center_cpu, cp.asnumpy(elmap.center))
+
+
+def test_push_pull_inpainting_does_not_wait_for_the_gpu(tmp_path):
+    plugins = yaml.safe_load((_CONFIG_DIR / "plugin_config.yaml").read_text())
+    plugins["inpainting"]["extra_params"]["method"] = "push_pull"
+    (tmp_path / "plugins.yaml").write_text(yaml.safe_dump(plugins))
+    p = parameter.Parameter(
+        use_chainer=False,
+        weight_file=str(_CONFIG_DIR / "weights.dat"),
+        plugin_config_file=str(tmp_path / "plugins.yaml"),
+    )
+    p.update()
+    elmap = elevation_mapping.ElevationMap(p)
+    rng = np.random.default_rng(0)
+    points = cp.asarray(np.stack([rng.uniform(-3, 3, 5000), rng.uniform(-3, 3, 5000), rng.uniform(-0.6, -0.4, 5000)], 1).astype(np.float32))
+    elmap.update_map_with_kernel(points, [], cp.eye(3, dtype=cp.float32), cp.asarray([0, 0, 0.5], cp.float32), 0.0, 0.0)
+
+    def inpaint():
+        elmap.plugin_manager.reset_layers()
+        elmap.get_map_with_name_ref("inpaint", return_cupy=True)
+
+    assert _cpu_ms_behind_gpu_work(inpaint, _busy_cycles(100)) < 50, "inpainting waited for queued GPU work"
