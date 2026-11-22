@@ -198,11 +198,14 @@ def add_points_kernel(
                     }
                 }
             }
-            if (${enable_visibility_cleanup}) {
+            // An invalid point fails the validity check on every step of its ray, so its ray
+            // never changes anything: it is not marched at all.
+            if (${enable_visibility_cleanup} && is_valid(x, y, z, t[0], t[1], t[2])) {
                 float ray_x, ray_y, ray_z;
                 float ray_length = ray_vector(t[0], t[1], t[2], x, y, z, ray_x, ray_y, ray_z);
                 ray_length = min(ray_length, (float)${max_ray_length});
                 int last_nidx = -1;
+                bool entered = false;
                 for (float s=${ray_step}; s < ray_length; s+=${ray_step}) {
                     // iterate through ray
                     U nx = t[0] + ray_x * s;
@@ -211,34 +214,37 @@ def add_points_kernel(
                     int nidx = get_idx(nx, ny, center_x[0], center_y[0]);
                     if (last_nidx == nidx) {continue;}  // Skip if we're still in the same cell
                     else {last_nidx = nidx;}
-                    if (!is_inside(nidx)) {continue;}
+                    if (!is_inside(nidx)) {
+                        // The cell indices change monotonically along the ray, so once it has
+                        // left the map's interior it cannot come back.
+                        if (entered) {break;}
+                        continue;
+                    }
+                    entered = true;
 
-                    U nmap_h = map[get_map_idx(nidx, 0)];
-                    U nmap_v = map[get_map_idx(nidx, 1)];
-                    U nmap_valid = map[get_map_idx(nidx, 2)];
-                    // traversability
-                    U nmap_trav = map[get_map_idx(nidx, 3)];
-                    // Time layer
-                    U non_updated_t = map[get_map_idx(nidx, 4)];
-                    // upper bound
-                    U nmap_upper = map[get_map_idx(nidx, 5)];
-                    U nmap_is_upper = map[get_map_idx(nidx, 6)];
-
-                    // If point is close or is farther away than ray length, skip.
+                    // If the point is close, skip.
                     float d = (x - nx) * (x - nx) + (y - ny) * (y - ny) + (z - nz) * (z - nz);
-                    if (d < 0.1 || !is_valid(x, y, z, t[0], t[1], t[2])) {continue;}
+                    if (d < 0.1) {continue;}
 
+                    // Layers are read only once a check needs them: most cells stop at the
+                    // valid or time layer.
+                    U nmap_valid = map[get_map_idx(nidx, 2)];
                     // If invalid, do upper bound check, then skip
                     if (nmap_valid < 0.5) {
+                      U nmap_upper = map[get_map_idx(nidx, 5)];
+                      U nmap_is_upper = map[get_map_idx(nidx, 6)];
                       if (nz < nmap_upper || nmap_is_upper < 0.5) {
                         map[get_map_idx(nidx, 5)] = nz;
                         map[get_map_idx(nidx, 6)] = 1.0f;
                       }
                       continue;
                     }
-                    // If updated recently, skip
+                    // Time layer. If updated recently, skip
+                    U non_updated_t = map[get_map_idx(nidx, 4)];
                     if (non_updated_t < 0.5) {continue;}
 
+                    U nmap_h = map[get_map_idx(nidx, 0)];
+                    U nmap_v = map[get_map_idx(nidx, 1)];
                     if (nmap_h > nz + 0.01 - min(nmap_v, 1.0) * 0.05) {
                         // If ray and norm is vertical, skip
                         U norm_x = norm_map[get_map_idx(nidx, 0)];
@@ -249,6 +255,9 @@ def add_points_kernel(
                         U num_points = newmap[get_map_idx(nidx, 3)];
                         if (num_points > ${wall_num_thresh} && non_updated_t < 1.0) {continue;}
 
+                        // upper bound (read before this ray's updates, which touch other layers)
+                        U nmap_upper = map[get_map_idx(nidx, 5)];
+                        U nmap_is_upper = map[get_map_idx(nidx, 6)];
                         // Finally, this cell is penetrated by the ray.
                         atomicAdd(&map[get_map_idx(nidx, 2)], -${cleanup_step}/(ray_length / ${max_ray_length}));
                         atomicAdd(&map[get_map_idx(nidx, 1)], ${outlier_variance});
