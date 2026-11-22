@@ -41,3 +41,13 @@ def test_push_pull_without_observations_returns_the_elevation_layer():
     em = _layers(np.full((30, 30), 2.0, np.float32), np.zeros((30, 30), bool))
     out = Inpainting(method="push_pull")(em, [], None, [])
     assert cp.array_equal(out, em[0])
+
+
+def test_push_pull_fill_handles_a_transposed_input():
+    from elevation_mapping_cupy.plugins.inpainting import push_pull_fill
+
+    rng = np.random.default_rng(1)
+    h = cp.asarray(rng.random((40, 70)).astype(np.float32))
+    w = cp.asarray(rng.random((40, 70)) > 0.5)
+    # Same fill up to float summation order (the kernels visit neighbours in a fixed order).
+    cp.testing.assert_allclose(push_pull_fill(h.T, w.T), push_pull_fill(h, w).T, atol=1e-6)

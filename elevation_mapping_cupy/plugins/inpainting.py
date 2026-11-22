@@ -71,8 +71,9 @@ def push_pull_fill(height: cp.ndarray, weight: cp.ndarray) -> cp.ndarray:
     non-zero.
     """
     pull, push, smooth = (_KERNELS.get_function(f) for f in ("pull", "push", "smooth"))
-    h = cp.where(weight > 0, height, 0).astype(cp.float32)
-    w = weight.astype(cp.float32)
+    # The kernels index row-major; where/astype would keep an F-ordered layout.
+    h = cp.ascontiguousarray(cp.where(weight > 0, height, 0), dtype=cp.float32)
+    w = cp.ascontiguousarray(weight, dtype=cp.float32)
     levels = [(h, w)]
     while h.shape[0] > 1 or h.shape[1] > 1:
         hc = cp.empty(((h.shape[0] + 1) // 2, (h.shape[1] + 1) // 2), cp.float32)
@@ -122,6 +123,8 @@ class Inpainting(PluginBase):
         elif method == "ns":  # Navier-Stokes
             self.method = cv.INPAINT_NS
         else:  # default method
+            if not self.push_pull:
+                _LOGGER.warning("Unknown inpainting method %r, using telea", method)
             self.method = cv.INPAINT_TELEA
 
     def __call__(
