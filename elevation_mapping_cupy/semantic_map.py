@@ -240,7 +240,8 @@ class SemanticMap:
                 self.add_layer(channel)
 
         # Resetting new_map for the layers that are to be deleted
-        self.new_map[self.delete_new_layers] = 0.0
+        # Masked write without boolean indexing, which reads the mask count back.
+        cp.copyto(self.new_map, 0.0, where=self.delete_new_layers[:, None, None])
         for fusion in list(set(additional_fusion)):
             # which layers need to be updated with this fusion algorithm
             pcl_ids, layer_ids = self.get_indices_fusion(process_channels, fusion, self.layer_specs_points)
@@ -289,7 +290,8 @@ class SemanticMap:
         process_channels, fusion_methods = self.get_fusion(
             channels, self.param.image_channel_fusions, self.layer_specs_image
         )
-        self.new_map[self.delete_new_layers] = 0.0
+        # Masked write without boolean indexing, which reads the mask count back.
+        cp.copyto(self.new_map, 0.0, where=self.delete_new_layers[:, None, None])
         for j, (fusion, channel) in enumerate(zip(fusion_methods, process_channels)):
             if channel not in self.layer_names:
                 print(f"Layer {channel} not found, adding it to the semantic map")

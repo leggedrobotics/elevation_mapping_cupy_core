@@ -104,6 +104,10 @@ class ElevationMap:
         self.data_type = self.param.data_type
         self.resolution = param.resolution
         self.center = xp.array([0, 0, 0], dtype=self.data_type)
+        # Host copy of `center`, updated alongside it, so moves and image
+        # projection never read the centre back from the GPU (a read-back waits
+        # for all queued GPU work). Treat both as read-only outside this class.
+        self.center_cpu = np.zeros(3, dtype=self.data_type)
         self.base_rotation = xp.eye(3, dtype=self.data_type)
         self.map_length = param.map_length
         self.cell_n = param.cell_n
@@ -221,12 +225,14 @@ class ElevationMap:
         Args:
             delta_position (numpy.ndarray):
         """
-        # Shift map using delta position.
-        delta_position = xp.asarray(delta_position)
-        delta_pixel = xp.round(delta_position[:2] / self.resolution)
+        # Shift map using delta position. Host math: a device input costs one
+        # read-back, a host input none.
+        delta_position = cp.asnumpy(delta_position)
+        delta_pixel = np.round(delta_position[:2] / self.resolution)
         delta_position_xy = delta_pixel * self.resolution
-        self.center[:2] += xp.asarray(delta_position_xy)
-        self.center[2] += xp.asarray(delta_position[2])
+        self.center_cpu[:2] += delta_position_xy
+        self.center_cpu[2] += delta_position[2]
+        self._upload_center()
         self.shift_map_xy(delta_pixel)
         self.shift_map_z(-delta_position[2])
 
@@ -237,16 +243,22 @@ class ElevationMap:
             position (numpy.ndarray):
             R (cupy._core.core.ndarray):
         """
-        # Shift map to the center of robot.
+        # Shift map to the center of robot. Host math (same dtypes and rounding
+        # as on the GPU): a device position costs one read-back, a host one none.
         self.base_rotation = xp.asarray(R, dtype=self.data_type)
-        position = xp.asarray(position)
-        delta = position - self.center
-        delta_pixel = xp.around(delta[:2] / self.resolution)
+        position = cp.asnumpy(position)
+        delta = position - self.center_cpu
+        delta_pixel = np.around(delta[:2] / self.resolution)
         delta_xy = delta_pixel * self.resolution
-        self.center[:2] += delta_xy
-        self.center[2] += delta[2]
+        self.center_cpu[:2] += delta_xy
+        self.center_cpu[2] += delta[2]
+        self._upload_center()
         self.shift_map_xy(-delta_pixel)
         self.shift_map_z(-delta[2])
+
+    def _upload_center(self):
+        """Copy center_cpu to the device centre in place (asynchronous)."""
+        self.center[...] = cp.asarray(self.center_cpu)
 
     def pad_value(self, x, shift_value, idx=None, value=0.0):
         """Create a padding of the map along x,y-axis according to amount that has shifted.
@@ -283,8 +295,10 @@ class ElevationMap:
             delta_pixel (cupy._core.core.ndarray):
 
         """
-        shift_value = delta_pixel.astype(cp.int32)
-        if cp.abs(shift_value).sum() == 0:
+        # Integer shifts on the host: slicing with device scalars would wait for
+        # the GPU at every comparison.
+        shift_value = cp.asnumpy(delta_pixel).astype(np.int32)
+        if not shift_value.any():
             return
         with self.map_lock:
             self.elevation_map = cp.roll(self.elevation_map, shift_value, axis=(1, 2))
@@ -425,18 +439,19 @@ class ElevationMap:
                 size=(points.shape[0]),
             )
             
-            if (
-                self.param.enable_drift_compensation
-                and error_cnt > self.param.min_height_drift_cnt
-                and (
-                    position_noise > self.param.position_noise_thresh
-                    or orientation_noise > self.param.orientation_noise_thresh
-                )
+            # Host checks first; the count and drift checks stay on the GPU so
+            # this never waits for the error-counting kernel.
+            if self.param.enable_drift_compensation and (
+                position_noise > self.param.position_noise_thresh
+                or orientation_noise > self.param.orientation_noise_thresh
             ):
-                self.mean_error = error / error_cnt
-                self.additive_mean_error += self.mean_error
-                if np.abs(self.mean_error) < self.param.max_drift:
-                    self.elevation_map[0] += self.mean_error * self.param.drift_compensation_alpha
+                counted = error_cnt > self.param.min_height_drift_cnt
+                mean_error = error / cp.maximum(error_cnt, 1)
+                zero = cp.zeros_like(mean_error)
+                self.mean_error = cp.where(counted, mean_error, self.mean_error)
+                self.additive_mean_error = self.additive_mean_error + cp.where(counted, mean_error, zero)
+                apply = counted & (cp.abs(mean_error) < self.param.max_drift)
+                self.elevation_map[0] += cp.where(apply, mean_error * self.param.drift_compensation_alpha, zero)
 
             
             self.add_points_kernel(
@@ -602,6 +617,10 @@ class ElevationMap:
         assert image.ndim == 3, "image must have shape (D, H, W)"
         # image is already on GPU and correctly shaped
         image = image.astype(self.data_type)
+        # Camera position on the host for the kernel's scalar arguments: a
+        # device R/t costs one read-back, a host R/t none.
+        R_cpu = cp.asnumpy(R).astype(self.data_type)
+        t_cpu = cp.asnumpy(t).astype(self.data_type)
         K = cp.asarray(K, dtype=self.data_type)
         R = cp.asarray(R, dtype=self.data_type)
         t = cp.asarray(t, dtype=self.data_type)
@@ -630,8 +649,7 @@ class ElevationMap:
 
         # Calculate transformation matrix
         P = cp.asarray(K @ cp.concatenate([R, t[:, None]], 1), dtype=np.float32)
-        t_cam_map = -R.T @ t - self.center
-        t_cam_map = t_cam_map.get()
+        t_cam_map = -R_cpu.T @ t_cpu - self.center_cpu
         x1 = ((self.cell_n / 2) + (t_cam_map[0] / self.resolution)).astype(cp.uint32)
         y1 = ((self.cell_n / 2) + (t_cam_map[1] / self.resolution)).astype(cp.uint32)
         z1 = t_cam_map[2].astype(cp.float32)  # z1 is now a 0-dim CuPy array
@@ -1208,7 +1226,8 @@ class ElevationMap:
         total_plugin_layers = len(getattr(self.plugin_manager, "layer_names", []))
 
         with self.map_lock:
-            self.center[:] = cp.asarray(center_np, dtype=self.data_type)
+            self.center_cpu[:] = center_np
+            self._upload_center()
             for name, data in raw_layers.items():
                 target = self._resolve_layer_target(name, allow_semantic_creation=False)
                 if target is None:
