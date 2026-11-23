@@ -89,3 +89,10 @@ def test_drift_sums_restart_every_frame():
         np.testing.assert_allclose(float(em._drift_error[0]), float(error[0]), rtol=1e-4, atol=1e-5)
         counts.append(float(count[0]))
     assert counts[0] == 0 and counts[-1] > 1000  # empty map first, then matches
+
+
+def test_overlap_clear_rejects_a_non_contiguous_map():
+    em = _map()
+    em.elevation_map = cp.asfortranarray(em.elevation_map)
+    with pytest.raises(ValueError, match="C-contiguous"):
+        em.clear_overlap_map(cp.asarray([0.0, 0.0, 0.0], cp.float32))

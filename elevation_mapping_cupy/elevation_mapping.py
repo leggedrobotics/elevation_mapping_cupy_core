@@ -425,6 +425,9 @@ class ElevationMap:
     def update_map_with_kernel(self, points_all, channels, R, t, position_noise, orientation_noise):
         """Update map with new measurement.
 
+        Not re-entrant: new_map and the drift sums are shared between calls, so
+        calls on one map must not overlap (on different threads or streams).
+
         Args:
             points_all (cupy._core.core.ndarray):
             channels (List[str]):
@@ -527,6 +530,8 @@ class ElevationMap:
         n = self.cell_max - self.cell_min
         if n <= 0:
             return
+        if not self.elevation_map.flags.c_contiguous:
+            raise ValueError("clear_overlap_map needs a C-contiguous elevation_map")
         # One launch instead of a dozen slicing and where() ops. The values are baked
         # into the kernel, so it is rebuilt if any of them changes.
         key = (self.cell_n, self.cell_min, self.cell_max, self.param.overlap_clear_range_z, self.initial_variance)
