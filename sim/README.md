@@ -105,8 +105,8 @@ Runs a mapping simulation, then renders through the same rasteriser, from one
 oblique and one top-down camera: the scene, the ray-cast ground truth and the
 elevation map as one column per cell (same height colours), and the per-cell
 error (map − truth, diverging colours). The figure's title carries coverage,
-rmse, mae, bias and p95. Writes `<scene>_<sensor>_map_vs_truth.png`; about half
-a minute per figure, since every cell is a box geom.
+rmse, mae, bias and p95. Writes `<scene>_<sensor>_<trajectory>_<map length>m_map_vs_truth.png`;
+about 15 s per figure on a desktop, since every cell is a box geom.
 
 Getting this working headless on a Jetson takes some setup, which is why it has
 its own module and pixi task:

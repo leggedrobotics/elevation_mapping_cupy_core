@@ -4,7 +4,7 @@ Runs a mapping simulation, then renders, through MuJoCo from the same cameras:
 the scene itself, the ray-cast ground truth and the elevation map as one column
 per cell (same height colours), and the per-cell error (map - truth). One
 figure, an oblique row and a top-down row. Rendering is software (see
-:mod:`emsim.render`), so a figure takes roughly half a minute.
+:mod:`emsim.render`), about 15 s per figure on a desktop.
 """
 
 from __future__ import annotations
@@ -32,7 +32,12 @@ def cell_columns(values: np.ndarray, x: np.ndarray, y: np.ndarray, floor: float,
 
 
 def render_map(result, out: Path, width: int = 960, height: int = 720) -> Path:
-    """Write the comparison figure for a finished :func:`emsim.runner.run`."""
+    """Write the comparison figure for a finished :func:`emsim.runner.run`.
+
+    Needs a GL context: run through ``pixi run render-map``, or call
+    :func:`emsim.render.init_gl` before ``mujoco`` is first imported (the pixi
+    environment otherwise sets ``MUJOCO_GL=disable``).
+    """
     import matplotlib
 
     matplotlib.use("Agg")
@@ -45,6 +50,8 @@ def render_map(result, out: Path, width: int = 960, height: int = 720) -> Path:
     est, gt = result.layers["elevation"], result.ground_truth
     x, y = result.cell_centers()
     err = result.error("elevation")
+    if not np.isfinite(gt).any():
+        raise ValueError("the ground truth has no finite cell in the map window")
 
     model, data = scenes.build_model(result.scene)
     # The robot shell would hide the map centre; this is a picture of the terrain.
@@ -131,7 +138,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     map_length=args.map_length)
     result = run(cfg, layers=("elevation",))
     name = args.lidar_pattern if args.sensor == "lidar" else "camera"
-    path = render_map(result, args.out / f"{args.scene}_{name}_map_vs_truth.png")
+    path = render_map(result, args.out / f"{args.scene}_{name}_{args.trajectory}_{args.map_length:g}m_map_vs_truth.png")
     print(result.error("elevation"))
     print(f"wrote {path}")
     return 0
