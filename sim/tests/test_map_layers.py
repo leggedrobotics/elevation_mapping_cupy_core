@@ -97,33 +97,30 @@ def test_is_upper_bound_is_a_binary_flag(mapped):
     assert set(np.unique(is_upper[flagged])) <= {0.0, 1.0}
 
 
-def test_only_visibility_cleanup_downgrades_a_measured_cell():
+def test_without_visibility_cleanup_no_measured_cell_is_downgraded():
     """A measured cell becomes "upper bound only" solely via visibility cleanup.
 
     Cleanup erodes a cell's validity in small steps, so a cell can briefly be
     both measured and flagged. Turning cleanup off must remove that entirely --
-    which pins the flag to its one legitimate cause.
+    which pins the flag to its one legitimate cause. (In a static scene with
+    exact poses no ray passes under a real surface, so cleanup has nothing to
+    reclaim here; the core's test_visibility_cleanup covers the positive case.)
     """
-
-    def flagged_measured(enable_cleanup: bool) -> int:
-        result = run(
-            RunConfig(
-                scene="wall",
-                trajectory="spin",
-                n_steps=16,
-                resolution=0.04,
-                map_length=6.0,
-                enable_visibility_cleanup=enable_cleanup,
-            ),
-            layers=("elevation", "is_upper_bound"),
-        )
-        elevation, is_upper = result.layers["elevation"], result.layers["is_upper_bound"]
-        measured = np.isfinite(elevation) & np.isfinite(is_upper)
-        assert measured.sum() > 1000
-        return int((is_upper[measured] > 0.5).sum())
-
-    assert flagged_measured(enable_cleanup=False) == 0
-    assert flagged_measured(enable_cleanup=True) > 0, "cleanup should reclaim some cells"
+    result = run(
+        RunConfig(
+            scene="wall",
+            trajectory="spin",
+            n_steps=16,
+            resolution=0.04,
+            map_length=6.0,
+            enable_visibility_cleanup=False,
+        ),
+        layers=("elevation", "is_upper_bound"),
+    )
+    elevation, is_upper = result.layers["elevation"], result.layers["is_upper_bound"]
+    measured = np.isfinite(elevation) & np.isfinite(is_upper)
+    assert measured.sum() > 1000
+    assert int((is_upper[measured] > 0.5).sum()) == 0
 
 
 def test_normals_point_up_on_flat_ground(mapped_flat):

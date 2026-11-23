@@ -41,9 +41,9 @@ elevation = em.get_map_with_name("elevation")
 
 ## Development and simulation testing
 
-A [pixi](https://pixi.sh) environment pins the full toolchain (CuPy, MuJoCo,
-CUDA-enabled PyTorch, pytest) — no `sudo`, no system installs beyond JetPack /
-the CUDA runtime itself:
+A [pixi](https://pixi.sh) environment pins the full toolchain (CUDA 13, CuPy,
+MuJoCo 4, CUDA-enabled PyTorch, pytest) for x86 and Jetson Orin/Thor — no
+`sudo`, nothing beyond an NVIDIA driver (see [sim/README.md](sim/README.md)):
 
 ```bash
 pixi run test-all

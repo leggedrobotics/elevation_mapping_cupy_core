@@ -275,23 +275,27 @@ Two wrinkles worth knowing about:
   FOV keep the top image row 15° below the horizon, which is worth roughly a
   13× speedup on height-field scenes and costs no usable coverage.
 
-## CUDA on Jetson
+## CUDA: desktops, CI and Jetsons
 
-The environment is self-contained — no `sudo`, no writing into `/usr/local/cuda`.
-The one external prerequisite is JetPack itself (this was developed against
-JetPack 6 / R36.4.7, CUDA 12.6), which supplies the driver and CUDA runtime.
+The environment is self-contained: no `sudo`, no system CUDA toolkit. Python
+3.12, CuPy, CUDA-enabled PyTorch and the CUDA 13 runtime all come from
+conda-forge, one build for x86 and every Jetson; MuJoCo 4, MuJoCo-LiDAR and
+Warp come from PyPI. The only prerequisite is an NVIDIA driver.
 
-Two pieces need care on aarch64:
+| host | OS | what to run |
+| --- | --- | --- |
+| x86 desktop / CI runner | Ubuntu 22.04 or 24.04 | `pixi run test-all` |
+| Jetson AGX Thor (JetPack 7) | Ubuntu 24.04 | `pixi run test-all` |
+| Jetson Orin NX / AGX (JetPack 6) | Ubuntu 22.04 | `CONDA_OVERRIDE_CUDA=13.5 pixi install`, `pixi run cuda-compat`, then `pixi run test-all` |
 
-- **CuPy** comes from stock PyPI (`cupy-cuda12x`), whose aarch64 wheels work
-  against the JetPack CUDA runtime.
-- **PyTorch** — needed only by the traversability filter, which calls `.cuda()`
-  — has no CUDA-capable aarch64 wheel on stock PyPI. It comes from NVIDIA's
-  Jetson index, `https://pypi.jetson-ai-lab.io/jp6/cu126`, scoped to the
-  `linux-aarch64` target so the manifest still resolves on x86. That wheel links
-  against cuDSS, which JetPack does not ship, so `nvidia-cudss-cu12` is pulled
-  from PyPI and its lib directory added to `LD_LIBRARY_PATH` in
-  `[target.linux-aarch64.activation.env]`.
+JetPack 6's kernel driver is CUDA 12.6. `pixi run cuda-compat` unpacks NVIDIA's
+`cuda-compat-orin` user-mode driver (no root) into `.pixi/cuda-compat/`, which
+the activation puts on `LD_LIBRARY_PATH`; elsewhere it does nothing. Its CUDA
+minor version must be at least the environment's `cuda-version`, so the two are
+bumped together.
+
+`pixi run bench` prints the per-frame mapping time for a depth camera, a VLP-32
+and an OS-128 on 8 m and 16 m maps, with the device and library versions.
 
 If the traversability filter cannot be loaded, `ElevationMap` logs a warning and
 runs without it. `RunResult.traversability_enabled` reports the state, and the
