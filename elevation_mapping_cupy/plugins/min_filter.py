@@ -26,9 +26,13 @@ class MinFilter(PluginBase):
         self.height = cell_n
         self.min_filtered = cp.zeros((self.width, self.height))
         self.min_filtered_mask = cp.zeros((self.width, self.height))
+        # Each pass reads the previous pass's buffers and writes the other pair, so a pass
+        # spreads exactly dilation_size cells whatever the block scheduling. unfilled[it] is
+        # set when pass `it` leaves a cell invalid; once a pass leaves none, the later passes
+        # only copy (the old early exit, decided on the GPU instead of a host read-back).
         self.min_filter_kernel = cp.ElementwiseKernel(
-            in_params="raw U map, raw U mask",
-            out_params="raw U newmap, raw U newmask",
+            in_params="raw U mask, raw U map, raw U map_mask, int32 it",
+            out_params="raw U newmap, raw U newmask, raw int32 unfilled",
             preamble=string.Template(
                 """
                 __device__ int get_map_idx(int idx, int layer_n) {
@@ -57,24 +61,30 @@ class MinFilter(PluginBase):
             operation=string.Template(
                 """
                 U h = map[get_map_idx(i, 0)];
+                U m = map_mask[get_map_idx(i, 0)];
                 U valid = mask[get_map_idx(i, 0)];
-                if (valid < 0.5) {
+                if (valid < 0.5 && (it == 0 || unfilled[it - 1])) {
                     U min_value = 1000000.0;
                     for (int dy = -${dilation_size}; dy <= ${dilation_size}; dy++) {
                         for (int dx = -${dilation_size}; dx <= ${dilation_size}; dx++) {
                             int idx = get_relative_map_idx(i, dx, dy, 0);
                             if (!is_inside(idx)) {continue;}
-                            U valid = newmask[idx];
-                            U value = newmap[idx];
+                            U valid = map_mask[idx];
+                            U value = map[idx];
                             if(valid > 0.5 && value < min_value) {
                                 min_value = value;
                             }
                         }
                     }
                     if (min_value < 1000000 - 1) {
-                        newmap[get_map_idx(i, 0)] = min_value;
-                        newmask[get_map_idx(i, 0)] = 0.6;
+                        h = min_value;
+                        m = 0.6;
                     }
+                }
+                newmap[get_map_idx(i, 0)] = h;
+                newmask[get_map_idx(i, 0)] = m;
+                if (m < 0.5) {
+                    unfilled[it] = 1;
                 }
                 """
             ).substitute(dilation_size=dilation_size),
@@ -101,18 +111,14 @@ class MinFilter(PluginBase):
         Returns:
             cupy._core.core.ndarray:
         """
-        self.min_filtered = elevation_map[0].copy()
-        self.min_filtered_mask = elevation_map[2].copy()
-        for i in range(self.iteration_n):
+        m, k = elevation_map[0].copy(), elevation_map[2].copy()
+        next_m, next_k = cp.empty_like(m), cp.empty_like(k)
+        unfilled = cp.zeros(max(self.iteration_n, 1), dtype=cp.int32)
+        for it in range(self.iteration_n):
             self.min_filter_kernel(
-                elevation_map[0],
-                elevation_map[2],
-                self.min_filtered,
-                self.min_filtered_mask,
-                size=(self.width * self.height),
+                elevation_map[2], m, k, cp.int32(it), next_m, next_k, unfilled, size=(self.width * self.height)
             )
-            # If there's no more mask, break
-            if (self.min_filtered_mask > 0.5).all():
-                break
+            m, k, next_m, next_k = next_m, next_k, m, k
+        self.min_filtered, self.min_filtered_mask = m, k
         min_filtered = cp.where(self.min_filtered_mask > 0.5, self.min_filtered.copy(), cp.nan)
         return min_filtered

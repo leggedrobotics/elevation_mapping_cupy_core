@@ -220,3 +220,23 @@ class TestPadValue:
 #
 # Semantic/image fusion was intentionally removed from the supported surface of this repo.
 # Keep map-shift tests focused on the elevation map core.
+
+
+def test_semantic_elements_to_shift_follow_map():
+    """Arrays registered in elements_to_shift move with the map and are padded."""
+    from elevation_mapping_cupy.semantic_map import SemanticMap
+
+    p = parameter.Parameter(use_chainer=False)
+    p.update()
+    sm = SemanticMap(p)
+    el = cp.ones((1, p.cell_n, p.cell_n), dtype=cp.uint32)
+    el[0, 10, 20] = 7
+    sm.elements_to_shift["id_max"] = el
+
+    sm.shift_map_xy(np.array([3, -2], dtype=np.int32))
+
+    shifted = sm.elements_to_shift["id_max"]
+    assert int(shifted[0, 13, 18]) == 7
+    assert int(shifted[0, 10, 20]) == 1
+    assert not shifted[0, :3, :].any()
+    assert not shifted[0, :, -2:].any()

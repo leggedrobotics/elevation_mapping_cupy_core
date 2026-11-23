@@ -2,12 +2,12 @@
 # Copyright (c) 2022, Takahiro Miki. All rights reserved.
 # Licensed under the MIT license. See LICENSE file in the project root for details.
 #
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 import pickle
 import numpy as np
 from simple_parsing.helpers import Serializable
 from dataclasses import field
-from typing import Tuple
+from typing import Tuple, get_type_hints
 
 
 @dataclass
@@ -245,7 +245,10 @@ class Parameter(Serializable):
         Returns:
             list: A list of parameter names.
         """
-        return list(self.__annotations__.keys())
+        # dataclasses.fields() rather than self.__annotations__: since Python 3.14
+        # (PEP 649) annotations are created lazily and the instance lookup falls
+        # through to a base class's (simple_parsing SerializableMixin) annotations.
+        return [f.name for f in fields(self)]
 
     def get_types(self):
         """
@@ -254,7 +257,8 @@ class Parameter(Serializable):
         Returns:
             list: A list of parameter types.
         """
-        return [v.__name__ for v in self.__annotations__.values()]
+        hints = get_type_hints(type(self))
+        return [getattr(hints[f.name], "__name__", str(hints[f.name])) for f in fields(self)]
 
     def set_value(self, name, value):
         """
