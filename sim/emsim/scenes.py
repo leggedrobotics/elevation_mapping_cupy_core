@@ -121,6 +121,8 @@ class Scene:
     bounds: Tuple[float, float, float, float] = (-6.0, 6.0, -6.0, 6.0)
     # Terrain height the robot walks at, if not the surface under its base: on
     # stepping stones the body stays level instead of dropping into every gap.
+    # It applies everywhere in the scene, so a path that leaves the stones
+    # carries the base level over the pit too.
     walk_z: Optional[float] = None
 
     def walk_height(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:

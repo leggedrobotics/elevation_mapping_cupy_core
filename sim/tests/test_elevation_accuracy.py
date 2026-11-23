@@ -199,7 +199,10 @@ def test_stepping_stones_walk(sim_run, viz):
     for b in stones:
         dx, dy = np.abs(x - b.pos[0]) - b.size[0], np.abs(y - b.pos[1]) - b.size[1]
         dist = np.minimum(dist, np.hypot(np.maximum(dx, 0), np.maximum(dy, 0)) + np.minimum(np.maximum(dx, dy), 0))
-    field = (x > 0.7) & (x < 4.0) & (np.abs(y) < 1.05)
+    # Score the stone field itself, plus a gap's width around it.
+    lo = np.min([[b.pos[0] - b.size[0], b.pos[1] - b.size[1]] for b in stones], axis=0) - 0.2
+    hi = np.max([[b.pos[0] + b.size[0], b.pos[1] + b.size[1]] for b in stones], axis=0) + 0.2
+    field = (x > lo[0]) & (x < hi[0]) & (y > lo[1]) & (y < hi[1])
     seen = np.isfinite(est)
     tops = field & seen & (dist < -cfg.resolution)
     pit = field & (gt < 0.01)
