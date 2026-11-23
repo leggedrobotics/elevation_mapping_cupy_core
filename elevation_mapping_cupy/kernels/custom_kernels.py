@@ -72,9 +72,9 @@ def map_utils(
         __device__ bool is_valid(float x, float y, float z,
                                float sx, float sy, float sz) {
             float d = point_sensor_distance(x, y, z, sx, sy, sz);
-            // Legacy (from_sensor=0) measures the ramp distance from the map origin.
-            float hx = x - ${ramped_height_range_from_sensor} * sx;
-            float hy = y - ${ramped_height_range_from_sensor} * sy;
+            // Legacy measures the ramp distance from the map origin.
+            float hx = ${ramp_dx};
+            float hy = ${ramp_dy};
             float dxy = max(sqrt(hx * hx + hy * hy) - ${ramped_height_range_b}, 0.0);
             if (d < ${min_valid_distance} * ${min_valid_distance}) {
                 return false;
@@ -125,7 +125,8 @@ def map_utils(
         ramped_height_range_a=ramped_height_range_a,
         ramped_height_range_b=ramped_height_range_b,
         ramped_height_range_c=ramped_height_range_c,
-        ramped_height_range_from_sensor=int(ramped_height_range_from_sensor),
+        ramp_dx="x - sx" if ramped_height_range_from_sensor else "x",
+        ramp_dy="y - sy" if ramped_height_range_from_sensor else "y",
     )
     return util_preamble
 

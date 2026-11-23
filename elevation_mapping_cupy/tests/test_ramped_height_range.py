@@ -1,6 +1,9 @@
+from pathlib import Path
+
 import cupy as cp
 import pytest
 
+from elevation_mapping_cupy import elevation_mapping
 from elevation_mapping_cupy.kernels import add_points_kernel
 from elevation_mapping_cupy.parameter import Parameter
 
@@ -44,3 +47,19 @@ def test_legacy_ramp_is_relative_to_map_origin():
     # Default keeps the old behaviour: the ramp distance is measured from the map origin.
     assert point_validity(0.0, POINTS, from_sensor=False) == [False, True]
     assert point_validity(30.0, POINTS, from_sensor=False) == [True, True]
+
+
+def test_flag_reaches_both_kernels(monkeypatch):
+    import elevation_mapping_cupy.elevation_mapping as em_module
+    seen = {}
+    for name in ("add_points_kernel", "error_counting_kernel"):
+        real = getattr(em_module, name)
+        def spy(*a, _real=real, _name=name, **k):
+            seen[_name] = a[-1] if "ramped_height_range_from_sensor" not in k else k["ramped_height_range_from_sensor"]
+            return _real(*a, **k)
+        monkeypatch.setattr(em_module, name, spy)
+    p = Parameter(use_chainer=False, ramped_height_range_from_sensor=True,
+                  plugin_config_file=str(Path(__file__).parent.parent / "configs" / "plugin_config.yaml"))
+    p.update()
+    elevation_mapping.ElevationMap(p)
+    assert seen == {"add_points_kernel": True, "error_counting_kernel": True}
