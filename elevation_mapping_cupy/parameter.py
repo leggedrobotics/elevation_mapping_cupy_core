@@ -76,6 +76,9 @@ class Parameter(Serializable):
                                (Default: ``1.0``)
         ramped_height_range_c: If z > max(d - ramped_height_range_b, 0) * ramped_height_range_a + ramped_height_range_c, reject.  
                                (Default: ``0.2``)
+        ramped_height_range_from_sensor: Measure d in the ramped height range as the horizontal distance from the sensor.  
+                                         If False, d is the horizontal distance from the map frame origin (legacy behaviour).  
+                                         (Default: ``False``)
         safe_thresh: If traversability is smaller, it is counted as unsafe cell.  
                      (Default: ``0.5``)
         safe_min_thresh: Polygon is unsafe if there exists lower traversability than this.  
@@ -183,6 +186,7 @@ class Parameter(Serializable):
     ramped_height_range_a: float = 0.3  # if z > max(d - ramped_height_range_b, 0) * ramped_height_range_a + ramped_height_range_c, reject.
     ramped_height_range_b: float = 1.0  # if z > max(d - ramped_height_range_b, 0) * ramped_height_range_a + ramped_height_range_c, reject.
     ramped_height_range_c: float = 0.2  # if z > max(d - ramped_height_range_b, 0) * ramped_height_range_a + ramped_height_range_c, reject.
+    ramped_height_range_from_sensor: bool = False  # d is the horizontal distance from the sensor; False (legacy) measures it from the map frame origin.
 
     safe_thresh: float = 0.5  # if traversability is smaller, it is counted as unsafe cell.
     safe_min_thresh: float = 0.5  # polygon is unsafe if there exists lower traversability than this.

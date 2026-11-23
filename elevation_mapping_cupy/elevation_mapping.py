@@ -351,6 +351,7 @@ class ElevationMap:
             self.param.ramped_height_range_c,
             self.param.enable_edge_sharpen,
             self.param.enable_visibility_cleanup,
+            self.param.ramped_height_range_from_sensor,
         )
         self.error_counting_kernel = error_counting_kernel(
             self.resolution,
@@ -365,6 +366,7 @@ class ElevationMap:
             self.param.ramped_height_range_a,
             self.param.ramped_height_range_b,
             self.param.ramped_height_range_c,
+            self.param.ramped_height_range_from_sensor,
         )
         self.average_map_kernel = average_map_kernel(
             self.cell_n, self.cell_n, self.param.max_variance, self.initial_variance
