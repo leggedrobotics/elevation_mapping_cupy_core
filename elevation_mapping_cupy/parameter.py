@@ -109,7 +109,7 @@ class Parameter(Serializable):
                               (Default: ``0.1``)
         orientation_noise_thresh: If the orientation change is bigger than this value, the drift compensation happens.  
                                   (Default: ``0.1``)
-        keep_traversability_without_filter: Without a traversability filter, keep the traversability layer at 1.0 after clear() and in cells shifted into the map, as at start-up. Otherwise those cells read 0 and never count as drift compensation inliers.  
+        keep_traversability_without_filter: Without a traversability filter, keep the traversability layer at 1.0 after clear() and in cells shifted into the map, as at start-up. Otherwise those cells read 0 and never count as drift compensation inliers. The traversability layer is then a constant 1.0, not an estimate.  
                                             (Default: ``False``)
         plugin_config_file: Configuration file for the plugin.  
                             (Default: ``"config/plugin_config.yaml"``)

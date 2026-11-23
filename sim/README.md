@@ -94,6 +94,20 @@ Renders through MuJoCo's own rasteriser: `oblique`, `front` and `top` presets,
 about a second per frame. The cameras sit deliberately low — these terrains have
 decimetre relief over metres, which flat-shades into invisibility from above.
 
+### Map against ground truth, rendered
+
+```bash
+pixi run render-map --scene mixed --sensor lidar --lidar-pattern vlp32 --out sim/report
+pixi run render-map --scene steps --sensor camera --trajectory line
+```
+
+Runs a mapping simulation, then renders through the same rasteriser, from one
+oblique and one top-down camera: the scene, the ray-cast ground truth and the
+elevation map as one column per cell (same height colours), and the per-cell
+error (map − truth, diverging colours). The figure's title carries coverage,
+rmse, mae, bias and p95. Writes `<scene>_<sensor>_<trajectory>_<map length>m_map_vs_truth.png`;
+about 15 s per figure on a desktop, since every cell is a box geom.
+
 Getting this working headless on a Jetson takes some setup, which is why it has
 its own module and pixi task:
 
@@ -127,6 +141,7 @@ Rendered PNGs are gitignored.
 | `emsim/metrics.py` | RMSE / MAE / bias / p95 / coverage against ground truth |
 | `emsim/plotting.py` | Figures: comparison, layers, surface, convergence, filmstrip |
 | `emsim/render.py` | Rendered views through MuJoCo's rasteriser (headless via Mesa) |
+| `emsim/render_map.py` | Rendered map vs ground truth: scene, truth, map and error from the same cameras |
 | `emsim/cli.py` | `python -m emsim.cli` |
 
 Only `runner.py` needs CuPy. Scenes, the sensor and the ground-truth sampler are
