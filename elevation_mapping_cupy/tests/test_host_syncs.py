@@ -54,7 +54,12 @@ def _busy_cycles(ms):
 
 def _cpu_ms_behind_gpu_work(fn, cycles):
     """CPU time of fn() while ~100 ms of GPU work is queued ahead of it."""
-    fn()  # compile kernels outside the measurement
+    # Compile and load kernels outside the measurement. Twice: a second call can
+    # take a path the first did not (input_image creates its semantic layer on the
+    # first call and runs their copy kernel from the second), and loading a CUDA
+    # module waits for the GPU to go idle.
+    fn()
+    fn()
     cp.cuda.Device().synchronize()
     _SPIN((1,), (1,), (cycles,))
     t0 = time.perf_counter()
