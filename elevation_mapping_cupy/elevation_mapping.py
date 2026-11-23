@@ -23,6 +23,7 @@ from elevation_mapping_cupy.kernels import (
 from elevation_mapping_cupy.kernels import sum_kernel
 from elevation_mapping_cupy.kernels import error_counting_kernel
 from elevation_mapping_cupy.kernels import average_map_kernel
+from elevation_mapping_cupy.kernels import overlap_clear_kernel
 from elevation_mapping_cupy.kernels import dilation_filter_kernel
 from elevation_mapping_cupy.kernels import normal_filter_kernel
 from elevation_mapping_cupy.kernels import polygon_mask_kernel
@@ -335,6 +336,12 @@ class ElevationMap:
             (self.elevation_map.shape[0], self.cell_n, self.cell_n),
             dtype=self.data_type,
         )
+        # Per-frame constants and scratch kept on the device: built from Python lists
+        # every frame they cost a host-to-device copy each (~0.2 ms on a Jetson Orin).
+        self._zero_center = cp.zeros(1, dtype=self.data_type)
+        # Separate buffers: CuPy copies kernel outputs that share memory.
+        self._drift_error = cp.zeros(1, dtype=cp.float32)
+        self._drift_count = cp.zeros(1, dtype=cp.float32)
         self.traversability_input = cp.zeros((self.cell_n, self.cell_n), dtype=self.data_type)
         self.traversability_mask_dummy = cp.zeros((self.cell_n, self.cell_n), dtype=self.data_type)
         self.min_filtered = cp.zeros((self.cell_n, self.cell_n), dtype=self.data_type)
@@ -427,8 +434,9 @@ class ElevationMap:
             orientation_noise (float):
         """
         self.new_map *= 0.0
-        error = cp.array([0.0], dtype=cp.float32)
-        error_cnt = cp.array([0], dtype=cp.float32)
+        error, error_cnt = self._drift_error, self._drift_count
+        error.fill(0)
+        error_cnt.fill(0)
         points = points_all[:, :3]
 
         with self.map_lock:
@@ -439,8 +447,8 @@ class ElevationMap:
             self.error_counting_kernel(
                 self.elevation_map,
                 points,
-                cp.array([0.0], dtype=self.data_type),
-                cp.array([0.0], dtype=self.data_type),
+                self._zero_center,
+                self._zero_center,
                 R,
                 t,
                 self.new_map,
@@ -465,8 +473,8 @@ class ElevationMap:
 
             
             self.add_points_kernel(
-                cp.array([0.0], dtype=self.data_type),
-                cp.array([0.0], dtype=self.data_type),
+                self._zero_center,
+                self._zero_center,
                 R,
                 t,
                 self.normal_map,
@@ -516,17 +524,16 @@ class ElevationMap:
             t (cupy._core.core.ndarray): Absolute point position
         """
 
-        height_min = t[2] - self.param.overlap_clear_range_z
-        height_max = t[2] + self.param.overlap_clear_range_z
-        near_map = self.elevation_map[:, self.cell_min : self.cell_max, self.cell_min : self.cell_max]
-        valid_idx = ~cp.logical_or(near_map[0] < height_min, near_map[0] > height_max)
-        near_map[0] = cp.where(valid_idx, near_map[0], 0.0)
-        near_map[1] = cp.where(valid_idx, near_map[1], self.initial_variance)
-        near_map[2] = cp.where(valid_idx, near_map[2], 0.0)
-        valid_idx = ~cp.logical_or(near_map[5] < height_min, near_map[5] > height_max)
-        near_map[5] = cp.where(valid_idx, near_map[5], 0.0)
-        near_map[6] = cp.where(valid_idx, near_map[6], 0.0)
-        self.elevation_map[:, self.cell_min : self.cell_max, self.cell_min : self.cell_max] = near_map
+        n = self.cell_max - self.cell_min
+        if n <= 0:
+            return
+        # One launch instead of a dozen slicing and where() ops. The values are baked
+        # into the kernel, so it is rebuilt if any of them changes.
+        key = (self.cell_n, self.cell_min, self.cell_max, self.param.overlap_clear_range_z, self.initial_variance)
+        if getattr(self, "_overlap_clear_key", None) != key:
+            self._overlap_clear = overlap_clear_kernel(self.cell_n, self.cell_n, *key[1:])
+            self._overlap_clear_key = key
+        self._overlap_clear(t, self.elevation_map, size=n * n)
 
     def get_additive_mean_error(self):
         """Returns the additive mean error.
@@ -574,10 +581,6 @@ class ElevationMap:
         """
         raw_points = cp.asarray(raw_points, dtype=self.data_type)
         
-        # Check for the sanity of the raw points
-        min_points = cp.min(raw_points, axis=0)
-        max_points = cp.max(raw_points, axis=0)
-        mean_points = cp.mean(raw_points, axis=0)
                 
         additional_channels = channels[3:]
         raw_points = raw_points[~cp.isnan(raw_points[:, :3]).any(axis=1)]
