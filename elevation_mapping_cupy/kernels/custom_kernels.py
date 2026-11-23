@@ -24,13 +24,27 @@ def map_utils(
 
             return max(min(x, max_x), min_x);
         }
-        __device__ int get_x_idx(float x, float center) {
-            int i = (x - center) / ${resolution} + 0.5 * ${width};
+        // Cell index of a coordinate: (a / resolution + n / 2) in double, truncated.
+        // Double arithmetic is slow on most GPUs (1/64 rate on a Jetson), and the ray
+        // march evaluates this at every step. The float estimate is within
+        // 2.4e-7 * (|f| + n / 2) of the double value (three roundings of 2^-24), so
+        // unless it lies within 1e-6 * (|f| + n / 2) of a cell boundary (a 4x margin)
+        // both truncate to the same cell; only then is the double expression
+        // evaluated. The result is the double expression's, always.
+        __device__ int cell_index(float a, int n) {
+            const float half_n = 0.5f * n;
+            float f = a * (float)(1.0 / ${resolution}) + half_n;
+            if (fabsf(f - rintf(f)) > 1e-6f * (fabsf(f) + half_n)) {
+                return (int)f;
+            }
+            int i = a / ${resolution} + 0.5 * n;
             return i;
         }
+        __device__ int get_x_idx(float x, float center) {
+            return cell_index(x - center, ${width});
+        }
         __device__ int get_y_idx(float y, float center) {
-            int i = (y - center) / ${resolution} + 0.5 * ${height};
-            return i;
+            return cell_index(y - center, ${height});
         }
         __device__ bool is_inside(int idx) {
             int idx_x = idx / ${width};
@@ -176,12 +190,17 @@ def add_points_kernel(
             U z = transform_p(rx, ry, rz, R[6], R[7], R[8], t[2]);
             U v = point_noise(rx, ry, rz);
             int idx = get_idx(x, y, center_x[0], center_y[0]);
+            // This point's contribution to its cell, added below.
+            int key = -1;
+            T add_h = 0, add_v = 0, add_n = 0;
             if (is_valid(x, y, z, t[0], t[1], t[2])) {
                 if (is_inside(idx)) {
                     U map_h = map[get_map_idx(idx, 0)];
                     U map_v = map[get_map_idx(idx, 1)];
                     U num_points = newmap[get_map_idx(idx, 4)];
                     if (abs(map_h - z) > (map_v * ${mahalanobis_thresh})) {
+                        // Not aggregated: other points read this variance to classify
+                        // themselves, so the add keeps its place in the kernel.
                         atomicAdd(&map[get_map_idx(idx, 1)], ${outlier_variance});
                     }
                     else {
@@ -191,9 +210,10 @@ def add_points_kernel(
                         else {
                             T new_h = (map_h * v + z * map_v) / (map_v + v);
                             T new_v = (map_v * v) / (map_v + v);
-                            atomicAdd(&newmap[get_map_idx(idx, 0)], new_h);
-                            atomicAdd(&newmap[get_map_idx(idx, 1)], new_v);
-                            atomicAdd(&newmap[get_map_idx(idx, 2)], 1.0);
+                            key = idx;
+                            add_h = new_h;
+                            add_v = new_v;
+                            add_n = 1;
                             // is Valid
                             map[get_map_idx(idx, 2)] = 1;
                             // Time layer
@@ -202,9 +222,42 @@ def add_points_kernel(
                             map[get_map_idx(idx, 5)] = new_h;
                             map[get_map_idx(idx, 6)] = 0.0;
                         }
-                        // visibility cleanup
                     }
                 }
+            }
+#if __CUDA_ARCH__ >= 700
+            // Neighbouring points (scan or pixel order) mostly share a cell, and
+            // same-address atomics serialise. Lanes of a warp with the same cell sum
+            // their contributions first (pointer jumping along the lanes of each
+            // group, log2(group size) rounds) and the group's lowest lane adds once.
+            {
+                const unsigned mask = __activemask();
+                const unsigned peers = __match_any_sync(mask, key);
+                const int lane = threadIdx.x & 31;
+                const unsigned above = lane == 31 ? 0u : peers & (0xffffffffu << (lane + 1));
+                int next = above ? __ffs(above) - 1 : -1;
+                while (__any_sync(mask, next >= 0)) {
+                    const int src = next >= 0 ? next : lane;
+                    T h = __shfl_sync(mask, add_h, src);
+                    T vv = __shfl_sync(mask, add_v, src);
+                    T n = __shfl_sync(mask, add_n, src);
+                    int nn = __shfl_sync(mask, next, src);
+                    if (next >= 0) {
+                        add_h += h;
+                        add_v += vv;
+                        add_n += n;
+                        next = nn;
+                    }
+                }
+                if ((peers & ((1u << lane) - 1u)) != 0) {
+                    key = -1;  // not the group's lowest lane
+                }
+            }
+#endif
+            if (key >= 0) {
+                atomicAdd(&newmap[get_map_idx(key, 0)], add_h);
+                atomicAdd(&newmap[get_map_idx(key, 1)], add_v);
+                atomicAdd(&newmap[get_map_idx(key, 2)], add_n);
             }
             // An invalid point fails the validity check on every step of its ray, so its ray
             // never changes anything: it is not marched at all.
