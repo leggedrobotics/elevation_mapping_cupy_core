@@ -454,6 +454,41 @@ def error_counting_kernel(
     return error_counting_kernel
 
 
+def overlap_clear_kernel(width, height, cell_min, cell_max, clear_range_z, initial_variance):
+    """Overlap clearance in one launch, over the cells [cell_min, cell_max)^2.
+
+    A cell whose elevation lies outside t[2] +- clear_range_z is reset (height 0,
+    initial variance, invalid); one whose upper bound does has the bound cleared.
+    Comparisons as in NumPy, so a NaN height is kept.
+    """
+    n = cell_max - cell_min
+    return cp.ElementwiseKernel(
+        in_params="raw U t",
+        out_params="raw U map",
+        operation=string.Template(
+            """
+            const int layer = ${width} * ${height};
+            const int idx = (${cell_min} + i / ${n}) * ${width} + ${cell_min} + i % ${n};
+            const U lo = t[2] - (U)${clear_range_z};
+            const U hi = t[2] + (U)${clear_range_z};
+            const U h = map[idx];
+            if (h < lo || h > hi) {
+                map[idx] = 0;
+                map[layer + idx] = (U)${initial_variance};
+                map[2 * layer + idx] = 0;
+            }
+            const U u = map[5 * layer + idx];
+            if (u < lo || u > hi) {
+                map[5 * layer + idx] = 0;
+                map[6 * layer + idx] = 0;
+            }
+            """
+        ).substitute(width=width, height=height, cell_min=cell_min, n=n,
+                     clear_range_z=float(clear_range_z), initial_variance=float(initial_variance)),
+        name="overlap_clear_kernel",
+    )
+
+
 def average_map_kernel(width, height, max_variance, initial_variance):
     average_map_kernel = cp.ElementwiseKernel(
         in_params="raw U newmap",
