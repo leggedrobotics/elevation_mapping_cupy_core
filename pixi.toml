@@ -67,3 +67,7 @@ cuda-compat = { cmd = "bash sim/cuda_compat.sh", description = "CUDA 13 user-mod
 [tasks.render]
 cmd = "python -m emsim.render"
 env = { MUJOCO_GL = "egl", MESA_LOADER_DRIVER_OVERRIDE = "llvmpipe", GALLIUM_DRIVER = "llvmpipe", __EGL_VENDOR_LIBRARY_DIRS = "$PIXI_PROJECT_ROOT/.pixi/envs/default/share/glvnd/egl_vendor.d", LD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/.pixi/envs/default/lib:$LD_LIBRARY_PATH" }
+# Map vs ground truth through the same renderer: scene, truth, map, error.
+[tasks.render-map]
+cmd = "python -m emsim.render_map"
+env = { MUJOCO_GL = "egl", MESA_LOADER_DRIVER_OVERRIDE = "llvmpipe", GALLIUM_DRIVER = "llvmpipe", __EGL_VENDOR_LIBRARY_DIRS = "$PIXI_PROJECT_ROOT/.pixi/envs/default/share/glvnd/egl_vendor.d", LD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/.pixi/envs/default/lib:$LD_LIBRARY_PATH" }
