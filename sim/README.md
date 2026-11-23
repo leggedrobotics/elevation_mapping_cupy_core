@@ -286,7 +286,7 @@ Warp come from PyPI. The only prerequisite is an NVIDIA driver.
 | --- | --- | --- |
 | x86 desktop / CI runner | Ubuntu 22.04 or 24.04 | `pixi run test-all` |
 | Jetson AGX Thor (JetPack 7) | Ubuntu 24.04 | `pixi run test-all` |
-| Jetson Orin NX / AGX (JetPack 6) | Ubuntu 22.04 | `CONDA_OVERRIDE_CUDA=13.5 pixi install`, `pixi run cuda-compat`, then `pixi run test-all` |
+| Jetson Orin NX / AGX (JetPack 6) | Ubuntu 22.04 | `export CONDA_OVERRIDE_CUDA=13.5` (the host reports CUDA 12.6; every pixi command needs it), `pixi run cuda-compat` once, then `pixi run test-all` |
 
 JetPack 6's kernel driver is CUDA 12.6. `pixi run cuda-compat` unpacks NVIDIA's
 `cuda-compat-orin` user-mode driver (no root) into `.pixi/cuda-compat/`, which

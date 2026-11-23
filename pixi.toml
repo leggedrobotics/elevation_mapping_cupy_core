@@ -5,8 +5,8 @@ description = "Dev + MuJoCo simulation environment for elevation_mapping_cupy_co
 channels = ["conda-forge"]
 # CUDA 13 from conda-forge, one build for x86 desktops/CI and every Jetson:
 # Thor (JetPack 7, Ubuntu 24.04) runs it as is; Orin NX/AGX (JetPack 6, Ubuntu
-# 22.04, kernel driver CUDA 12.6) needs `pixi run cuda-compat` once, and the
-# install needs CONDA_OVERRIDE_CUDA=13.5 there because the host reports 12.6.
+# 22.04, kernel driver CUDA 12.6) needs `pixi run cuda-compat` once, and
+# `export CONDA_OVERRIDE_CUDA=13.5` for every pixi command, as the host reports 12.6.
 # Nothing is taken from a system CUDA toolkit. glibc 2.34 is what the aarch64
 # warp-lang wheels need (22.04 has 2.35); uv would otherwise assume 2.28.
 platforms = [
@@ -60,7 +60,7 @@ test-sim = "pytest sim/tests -q"
 test-all = "pytest elevation_mapping_cupy/tests sim/tests -q"
 sim = "python -m emsim.cli"
 bench = { cmd = "python -m emsim.bench", description = "Mapping speed per sensor load (markdown table)" }
-cuda-compat = { cmd = "bash sim/cuda_compat.sh", description = "CUDA 13 user-mode driver for JetPack 6 (no-op elsewhere)" }
+cuda-compat = { cmd = "bash sim/cuda_compat.sh", description = "CUDA 13 user-mode driver for JetPack 6, run with CONDA_OVERRIDE_CUDA=13.5 exported (no-op elsewhere)" }
 # Scene rendering goes through Mesa's software rasteriser. LD_LIBRARY_PATH has
 # to be set before the process starts (the dynamic loader reads it once), so it
 # lives here rather than in emsim.render.

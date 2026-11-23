@@ -33,6 +33,8 @@ def main() -> None:
     p.add_argument("--resolution", type=float, default=0.04)
     p.add_argument("--map-lengths", default="8,16", help="comma-separated map side lengths [m]")
     args = p.parse_args()
+    if args.steps <= WARMUP:
+        p.error(f"--steps must exceed the {WARMUP} warm-up frames")
 
     dev = cp.cuda.runtime.getDeviceProperties(0)
     print(f"{platform.node()}: {dev['name'].decode()}, CUDA runtime {cp.cuda.runtime.runtimeGetVersion()}, "

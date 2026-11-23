@@ -208,9 +208,9 @@ def nominal_path(cfg: RunConfig) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         r = cfg.path_radius
         xs = x0 + r * np.sin(t)
         ys = y0 + r * np.sin(t) * np.cos(t)
-        # Heading follows the path tangent.
-        dx = np.gradient(xs)
-        dy = np.gradient(ys)
+        # Heading follows the path tangent (central differences around the closed lap).
+        dx = np.roll(xs, -1) - np.roll(xs, 1)
+        dy = np.roll(ys, -1) - np.roll(ys, 1)
         return xs, ys, np.arctan2(dy, dx)
     raise ValueError(f"unknown trajectory '{cfg.trajectory}'; available: {TRAJECTORIES}")
 
@@ -365,8 +365,12 @@ def run(
     sensor = make_sensor(cfg, model, data, robot_id)
 
     param = make_parameter(cfg)
-    em = ElevationMap(param)
     cell_n = param.true_cell_n
+    if cell_n % 2:
+        # map_cell_centers puts cell centres on the (k + 0.5) * resolution lattice
+        # only for an even count; an odd one would score against shifted truth.
+        raise ValueError(f"map_length / resolution gives {cell_n} cells; pick values that give an even count")
+    em = ElevationMap(param)
     scratch = np.zeros((cell_n, cell_n), dtype=np.float32)
 
     sensor_ms: List[float] = []

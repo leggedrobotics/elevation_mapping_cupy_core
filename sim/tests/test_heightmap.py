@@ -147,3 +147,10 @@ def test_sample_map_grid_orientation_follows_the_terrain(gt_sampler):
     top_rows = np.nanmean(grid[:10])  # largest x
     bottom_rows = np.nanmean(grid[-10:])  # smallest x
     assert top_rows > bottom_rows + 0.1
+
+
+def test_odd_cell_count_is_rejected():
+    from emsim.runner import RunConfig, run
+
+    with pytest.raises(ValueError, match="even count"):
+        run(RunConfig(scene="flat", n_steps=1, map_length=5.0, resolution=0.04))
