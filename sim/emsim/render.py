@@ -125,8 +125,10 @@ def pick_egl_device() -> Optional[int]:
     return None
 
 
-def make_renderer(model, height: int = 720, width: int = 1080):
+def make_renderer(model, height: int = 720, width: int = 1080, max_geom: int = 10000):
     """Build a ``mujoco.Renderer`` on whichever EGL device works.
+
+    ``max_geom`` bounds the scene's geoms, user geoms added after update_scene included.
 
     Raises:
         RuntimeError: If no EGL device yields a usable context.
@@ -143,7 +145,7 @@ def make_renderer(model, height: int = 720, width: int = 1080):
                 "LD_LIBRARY_PATH and __EGL_VENDOR_LIBRARY_DIRS before the process starts."
             )
         os.environ["MUJOCO_EGL_DEVICE_ID"] = str(device)
-    return mujoco.Renderer(model, height, width)
+    return mujoco.Renderer(model, height, width, max_geom=max_geom)
 
 
 def render_scene(
