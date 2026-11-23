@@ -134,9 +134,9 @@ class SemanticMap:
         self.pad_value(self.semantic_map, shift_value, value=0.0)
         self.new_map = cp.roll(self.new_map, shift_value, axis=(1, 2))
         self.pad_value(self.new_map, shift_value, value=0.0)
-        for el in self.elements_to_shift.values():
-            el = cp.roll(el, shift_value, axis=(1, 2))
-            self.pad_value(el, shift_value, value=0.0)
+        for k, el in self.elements_to_shift.items():
+            self.elements_to_shift[k] = cp.roll(el, shift_value, axis=(1, 2))
+            self.pad_value(self.elements_to_shift[k], shift_value, value=0.0)
 
     def get_fusion(
         self, channels: List[str], channel_fusions: Dict[str, str], layer_specs: Dict[str, str]
@@ -240,7 +240,8 @@ class SemanticMap:
                 self.add_layer(channel)
 
         # Resetting new_map for the layers that are to be deleted
-        self.new_map[self.delete_new_layers] = 0.0
+        # Masked write without boolean indexing, which reads the mask count back.
+        cp.copyto(self.new_map, 0.0, where=self.delete_new_layers[:, None, None])
         for fusion in list(set(additional_fusion)):
             # which layers need to be updated with this fusion algorithm
             pcl_ids, layer_ids = self.get_indices_fusion(process_channels, fusion, self.layer_specs_points)
@@ -289,7 +290,8 @@ class SemanticMap:
         process_channels, fusion_methods = self.get_fusion(
             channels, self.param.image_channel_fusions, self.layer_specs_image
         )
-        self.new_map[self.delete_new_layers] = 0.0
+        # Masked write without boolean indexing, which reads the mask count back.
+        cp.copyto(self.new_map, 0.0, where=self.delete_new_layers[:, None, None])
         for j, (fusion, channel) in enumerate(zip(fusion_methods, process_channels)):
             if channel not in self.layer_names:
                 print(f"Layer {channel} not found, adding it to the semantic map")

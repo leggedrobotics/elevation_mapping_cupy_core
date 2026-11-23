@@ -1,0 +1,69 @@
+[workspace]
+name = "elevation-mapping-cupy-core"
+version = "0.1.0"
+description = "Dev + MuJoCo simulation environment for elevation_mapping_cupy_core"
+channels = ["conda-forge"]
+# CUDA 13 from conda-forge, one build for x86 desktops/CI and every Jetson:
+# Thor (JetPack 7, Ubuntu 24.04) runs it as is; Orin NX/AGX (JetPack 6, Ubuntu
+# 22.04, kernel driver CUDA 12.6) needs `pixi run cuda-compat` once, and
+# `export CONDA_OVERRIDE_CUDA=13.5` for every pixi command, as the host reports 12.6.
+# Nothing is taken from a system CUDA toolkit. glibc 2.34 is what the aarch64
+# warp-lang wheels need (22.04 has 2.35); uv would otherwise assume 2.28.
+platforms = [
+  { platform = "linux-64", cuda = "13", glibc = "2.34" },
+  { platform = "linux-aarch64", cuda = "13", glibc = "2.34" },
+]
+
+[dependencies]
+# mujoco 4 needs >= 3.11, mujoco-lidar < 3.14.
+python = "3.12.*"
+# Keep in step with the compat package in sim/cuda_compat.sh.
+cuda-version = "13.5.*"
+cupy = ">=13"
+# The traversability filter runs on torch and calls .cuda().
+pytorch = { version = "*", build = "cuda*" }
+numpy = "*"
+scipy = "*"
+pytest = "*"
+matplotlib = "*"
+simple-parsing = "*"
+"ruamel.yaml" = "*"
+pyyaml = "*"
+shapely = "*"
+# Software OpenGL (llvmpipe) so MuJoCo can render scene previews headless.
+mesalib = "*"
+
+[pypi-dependencies]
+mujoco = ">=4"
+# Optional sensor backend: real LiDAR scan patterns (Livox, Velodyne, Ouster).
+mujoco-lidar = ">=0.3"
+# GPU ray casting for the LiDAR backend (lidar_backend="warp").
+warp-lang = ">=1.7"
+opencv-python-headless = "*"
+
+[activation.env]
+# Keep ~/.local/lib/pythonX.Y/site-packages out of the env: stray pytest plugins
+# installed there get auto-loaded and break collection.
+PYTHONNOUSERSITE = "1"
+# The harness only uses MuJoCo ray casting (CPU). No GL context is ever needed,
+# and importing one on a headless Jetson fails, so disable it outright.
+MUJOCO_GL = "disable"
+# The core is used as a source tree rather than installed: its pyproject pins
+# cupy-cuda12x from PyPI, which would shadow the conda-forge CUDA 13 cupy.
+PYTHONPATH = "$PIXI_PROJECT_ROOT:$PIXI_PROJECT_ROOT/sim"
+# Only populated on JetPack 6 (sim/cuda_compat.sh); a missing directory is ignored.
+LD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/.pixi/cuda-compat/lib:$LD_LIBRARY_PATH"
+
+[tasks]
+test = "pytest elevation_mapping_cupy/tests -q"
+test-sim = "pytest sim/tests -q"
+test-all = "pytest elevation_mapping_cupy/tests sim/tests -q"
+sim = "python -m emsim.cli"
+bench = { cmd = "python -m emsim.bench", description = "Mapping speed per sensor load (markdown table)" }
+cuda-compat = { cmd = "bash sim/cuda_compat.sh", description = "CUDA 13 user-mode driver for JetPack 6, run with CONDA_OVERRIDE_CUDA=13.5 exported (no-op elsewhere)" }
+# Scene rendering goes through Mesa's software rasteriser. LD_LIBRARY_PATH has
+# to be set before the process starts (the dynamic loader reads it once), so it
+# lives here rather than in emsim.render.
+[tasks.render]
+cmd = "python -m emsim.render"
+env = { MUJOCO_GL = "egl", MESA_LOADER_DRIVER_OVERRIDE = "llvmpipe", GALLIUM_DRIVER = "llvmpipe", __EGL_VENDOR_LIBRARY_DIRS = "$PIXI_PROJECT_ROOT/.pixi/envs/default/share/glvnd/egl_vendor.d", LD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/.pixi/envs/default/lib:$LD_LIBRARY_PATH" }

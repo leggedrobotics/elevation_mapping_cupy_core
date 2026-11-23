@@ -16,18 +16,19 @@ def map_utils(
     ramped_height_range_a,
     ramped_height_range_b,
     ramped_height_range_c,
+    ramped_height_range_from_sensor=False,
 ):
     util_preamble = string.Template(
         """
-        __device__ float16 clamp(float16 x, float16 min_x, float16 max_x) {
+        __device__ float clamp(float x, float min_x, float max_x) {
 
             return max(min(x, max_x), min_x);
         }
-        __device__ int get_x_idx(float16 x, float16 center) {
+        __device__ int get_x_idx(float x, float center) {
             int i = (x - center) / ${resolution} + 0.5 * ${width};
             return i;
         }
-        __device__ int get_y_idx(float16 y, float16 center) {
+        __device__ int get_y_idx(float y, float center) {
             int i = (y - center) / ${resolution} + 0.5 * ${height};
             return i;
         }
@@ -42,7 +43,7 @@ def map_utils(
             }
             return true;
         }
-        __device__ int get_idx(float16 x, float16 y, float16 center_x, float16 center_y) {
+        __device__ int get_idx(float x, float y, float center_x, float center_y) {
             int idx_x = clamp(get_x_idx(x, center_x), 0, ${width} - 1);
             int idx_y = clamp(get_y_idx(y, center_y), 0, ${height} - 1);
             return ${width} * idx_x + idx_y;
@@ -51,27 +52,30 @@ def map_utils(
             const int layer = ${width} * ${height};
             return layer * layer_n + idx;
         }
-        __device__ float transform_p(float16 x, float16 y, float16 z,
-                                     float16 r0, float16 r1, float16 r2, float16 t) {
+        __device__ float transform_p(float x, float y, float z,
+                                     float r0, float r1, float r2, float t) {
             return r0 * x + r1 * y + r2 * z + t;
         }
-        __device__ float point_noise(float16 x, float16 y, float16 z){
+        __device__ float point_noise(float x, float y, float z){
             // Noise model based on squared range in the sensor frame.
             // This avoids v=0 for flat ground points (z=0) and works for both
             // depth-camera optical frames (where z is range) and generic frames.
             return ${sensor_noise_factor} * (x * x + y * y + z * z);
         }
 
-        __device__ float point_sensor_distance(float16 x, float16 y, float16 z,
-                                               float16 sx, float16 sy, float16 sz) {
+        __device__ float point_sensor_distance(float x, float y, float z,
+                                               float sx, float sy, float sz) {
             float d = (x - sx) * (x - sx) + (y - sy) * (y - sy) + (z - sz) * (z - sz);
             return d;
         }
 
-        __device__ bool is_valid(float16 x, float16 y, float16 z,
-                               float16 sx, float16 sy, float16 sz) {
+        __device__ bool is_valid(float x, float y, float z,
+                               float sx, float sy, float sz) {
             float d = point_sensor_distance(x, y, z, sx, sy, sz);
-            float dxy = max(sqrt(x * x + y * y) - ${ramped_height_range_b}, 0.0);
+            // Legacy measures the ramp distance from the map origin.
+            float hx = ${ramp_dx};
+            float hy = ${ramp_dy};
+            float dxy = max(sqrt(hx * hx + hy * hy) - ${ramped_height_range_b}, 0.0);
             if (d < ${min_valid_distance} * ${min_valid_distance}) {
                 return false;
             }
@@ -83,13 +87,13 @@ def map_utils(
             }
         }
 
-        __device__ float ray_vector(float16 tx, float16 ty, float16 tz,
-                                    float16 px, float16 py, float16 pz,
-                                    float16& rx, float16& ry, float16& rz){
-            float16 vx = px - tx;
-            float16 vy = py - ty;
-            float16 vz = pz - tz;
-            float16 norm = sqrt(vx * vx + vy * vy + vz * vz);
+        __device__ float ray_vector(float tx, float ty, float tz,
+                                    float px, float py, float pz,
+                                    float& rx, float& ry, float& rz){
+            float vx = px - tx;
+            float vy = py - ty;
+            float vz = pz - tz;
+            float norm = sqrt(vx * vx + vy * vy + vz * vz);
             if (norm > 0) {
                 rx = vx / norm;
                 ry = vy / norm;
@@ -103,8 +107,8 @@ def map_utils(
             return norm;
         }
 
-        __device__ float inner_product(float16 x1, float16 y1, float16 z1,
-                                       float16 x2, float16 y2, float16 z2) {
+        __device__ float inner_product(float x1, float y1, float z1,
+                                       float x2, float y2, float z2) {
 
             float product = (x1 * x2 + y1 * y2 + z1 * z2);
             return product;
@@ -121,6 +125,8 @@ def map_utils(
         ramped_height_range_a=ramped_height_range_a,
         ramped_height_range_b=ramped_height_range_b,
         ramped_height_range_c=ramped_height_range_c,
+        ramp_dx="x - sx" if ramped_height_range_from_sensor else "x",
+        ramp_dy="y - sy" if ramped_height_range_from_sensor else "y",
     )
     return util_preamble
 
@@ -143,6 +149,7 @@ def add_points_kernel(
     ramped_height_range_c,
     enable_edge_shaped=True,
     enable_visibility_cleanup=True,
+    ramped_height_range_from_sensor=False,
 ):
     add_points_kernel = cp.ElementwiseKernel(
         in_params="raw U center_x, raw U center_y, raw U R, raw U t, raw U norm_map",
@@ -157,6 +164,7 @@ def add_points_kernel(
             ramped_height_range_a,
             ramped_height_range_b,
             ramped_height_range_c,
+            ramped_height_range_from_sensor,
         ),
         operation=string.Template(
             """
@@ -198,12 +206,15 @@ def add_points_kernel(
                     }
                 }
             }
-            if (${enable_visibility_cleanup}) {
-                float16 ray_x, ray_y, ray_z;
-                float16 ray_length = ray_vector(t[0], t[1], t[2], x, y, z, ray_x, ray_y, ray_z);
-                ray_length = min(ray_length, (float16)${max_ray_length});
+            // An invalid point fails the validity check on every step of its ray, so its ray
+            // never changes anything: it is not marched at all.
+            if (${enable_visibility_cleanup} && is_valid(x, y, z, t[0], t[1], t[2])) {
+                float ray_x, ray_y, ray_z;
+                float ray_length = ray_vector(t[0], t[1], t[2], x, y, z, ray_x, ray_y, ray_z);
+                ray_length = min(ray_length, (float)${max_ray_length});
                 int last_nidx = -1;
-                for (float16 s=${ray_step}; s < ray_length; s+=${ray_step}) {
+                bool entered = false;
+                for (float s=${ray_step}; s < ray_length; s+=${ray_step}) {
                     // iterate through ray
                     U nx = t[0] + ray_x * s;
                     U ny = t[1] + ray_y * s;
@@ -211,34 +222,37 @@ def add_points_kernel(
                     int nidx = get_idx(nx, ny, center_x[0], center_y[0]);
                     if (last_nidx == nidx) {continue;}  // Skip if we're still in the same cell
                     else {last_nidx = nidx;}
-                    if (!is_inside(nidx)) {continue;}
+                    if (!is_inside(nidx)) {
+                        // The cell indices change monotonically along the ray, so once it has
+                        // left the map's interior it cannot come back.
+                        if (entered) {break;}
+                        continue;
+                    }
+                    entered = true;
 
-                    U nmap_h = map[get_map_idx(nidx, 0)];
-                    U nmap_v = map[get_map_idx(nidx, 1)];
+                    // If the point is close, skip.
+                    float d = (x - nx) * (x - nx) + (y - ny) * (y - ny) + (z - nz) * (z - nz);
+                    if (d < 0.1) {continue;}
+
+                    // Layers are read only once a check needs them: most cells stop at the
+                    // valid or time layer.
                     U nmap_valid = map[get_map_idx(nidx, 2)];
-                    // traversability
-                    U nmap_trav = map[get_map_idx(nidx, 3)];
-                    // Time layer
-                    U non_updated_t = map[get_map_idx(nidx, 4)];
-                    // upper bound
-                    U nmap_upper = map[get_map_idx(nidx, 5)];
-                    U nmap_is_upper = map[get_map_idx(nidx, 6)];
-
-                    // If point is close or is farther away than ray length, skip.
-                    float16 d = (x - nx) * (x - nx) + (y - ny) * (y - ny) + (z - nz) * (z - nz);
-                    if (d < 0.1 || !is_valid(x, y, z, t[0], t[1], t[2])) {continue;}
-
                     // If invalid, do upper bound check, then skip
                     if (nmap_valid < 0.5) {
+                      U nmap_upper = map[get_map_idx(nidx, 5)];
+                      U nmap_is_upper = map[get_map_idx(nidx, 6)];
                       if (nz < nmap_upper || nmap_is_upper < 0.5) {
                         map[get_map_idx(nidx, 5)] = nz;
                         map[get_map_idx(nidx, 6)] = 1.0f;
                       }
                       continue;
                     }
-                    // If updated recently, skip
+                    // Time layer. If updated recently, skip
+                    U non_updated_t = map[get_map_idx(nidx, 4)];
                     if (non_updated_t < 0.5) {continue;}
 
+                    U nmap_h = map[get_map_idx(nidx, 0)];
+                    U nmap_v = map[get_map_idx(nidx, 1)];
                     if (nmap_h > nz + 0.01 - min(nmap_v, 1.0) * 0.05) {
                         // If ray and norm is vertical, skip
                         U norm_x = norm_map[get_map_idx(nidx, 0)];
@@ -249,6 +263,9 @@ def add_points_kernel(
                         U num_points = newmap[get_map_idx(nidx, 3)];
                         if (num_points > ${wall_num_thresh} && non_updated_t < 1.0) {continue;}
 
+                        // upper bound (read before this ray's updates, which touch other layers)
+                        U nmap_upper = map[get_map_idx(nidx, 5)];
+                        U nmap_is_upper = map[get_map_idx(nidx, 6)];
                         // Finally, this cell is penetrated by the ray.
                         atomicAdd(&map[get_map_idx(nidx, 2)], -${cleanup_step}/(ray_length / ${max_ray_length}));
                         atomicAdd(&map[get_map_idx(nidx, 1)], ${outlier_variance});
@@ -293,6 +310,7 @@ def error_counting_kernel(
     ramped_height_range_a,
     ramped_height_range_b,
     ramped_height_range_c,
+    ramped_height_range_from_sensor=False,
 ):
     error_counting_kernel = cp.ElementwiseKernel(
         in_params="raw U map, raw U p, raw U center_x, raw U center_y, raw U R, raw U t",
@@ -307,6 +325,7 @@ def error_counting_kernel(
             ramped_height_range_a,
             ramped_height_range_b,
             ramped_height_range_c,
+            ramped_height_range_from_sensor,
         ),
         operation=string.Template(
             """
@@ -316,27 +335,43 @@ def error_counting_kernel(
             U x = transform_p(rx, ry, rz, R[0], R[1], R[2], t[0]);
             U y = transform_p(rx, ry, rz, R[3], R[4], R[5], t[1]);
             U z = transform_p(rx, ry, rz, R[6], R[7], R[8], t[2]);
-            U v = point_noise(rx, ry, rz);
-            // if (!is_valid(z, t[2])) {return;}
-            if (!is_valid(x, y, z, t[0], t[1], t[2])) {return;}
-            // if ((x - t[0]) * (x - t[0]) + (y - t[1]) * (y - t[1]) + (z - t[2]) * (z - t[2]) < 0.5) {return;}
-            int idx = get_idx(x, y, center_x[0], center_y[0]);
-            if (!is_inside(idx)) {
-                return;
+            T e = 0;
+            T cnt = 0;
+            // No early return: the scalar sums below are shared by the whole warp.
+            if (is_valid(x, y, z, t[0], t[1], t[2])) {
+                int idx = get_idx(x, y, center_x[0], center_y[0]);
+                if (is_inside(idx)) {
+                    U map_h = map[get_map_idx(idx, 0)];
+                    U map_v = map[get_map_idx(idx, 1)];
+                    U map_valid = map[get_map_idx(idx, 2)];
+                    U map_t = map[get_map_idx(idx, 3)];
+                    if (map_valid > 0.5 && (abs(map_h - z) < (map_v * ${mahalanobis_thresh}))
+                        && map_v < ${outlier_variance} / 2.0
+                        && map_t > ${traversability_inlier}) {
+                        e = z - map_h;
+                        cnt = 1;
+                        atomicAdd(&newmap[get_map_idx(idx, 3)], 1.0);
+                    }
+                    atomicAdd(&newmap[get_map_idx(idx, 4)], 1.0);
+                }
             }
-            U map_h = map[get_map_idx(idx, 0)];
-            U map_v = map[get_map_idx(idx, 1)];
-            U map_valid = map[get_map_idx(idx, 2)];
-            U map_t = map[get_map_idx(idx, 3)];
-            if (map_valid > 0.5 && (abs(map_h - z) < (map_v * ${mahalanobis_thresh}))
-                && map_v < ${outlier_variance} / 2.0
-                && map_t > ${traversability_inlier}) {
-                T e = z - map_h;
+            // Every point adding into the same two scalars serialises the atomics
+            // (15 ms for 19k points on a Jetson Thor), so a full warp sums its lanes
+            // first and adds once. Partial warps keep one atomic per point.
+            unsigned mask = __activemask();
+            if (mask == 0xffffffffu) {
+                for (int o = 16; o > 0; o >>= 1) {
+                    e += __shfl_xor_sync(mask, e, o);
+                    cnt += __shfl_xor_sync(mask, cnt, o);
+                }
+                if ((threadIdx.x & 31) != 0) {
+                    cnt = 0;
+                }
+            }
+            if (cnt > 0) {
                 atomicAdd(&error[0], e);
-                atomicAdd(&error_cnt[0], 1);
-                atomicAdd(&newmap[get_map_idx(idx, 3)], 1.0);
+                atomicAdd(&error_cnt[0], cnt);
             }
-            atomicAdd(&newmap[get_map_idx(idx, 4)], 1.0);
             """
         ).substitute(
             mahalanobis_thresh=mahalanobis_thresh,
@@ -582,26 +617,23 @@ def polygon_mask_kernel(width, height, resolution):
                 return idx_y;
             }
 
-            __device__ float16 clamp(float16 x, float16 min_x, float16 max_x) {
+            __device__ float clamp(float x, float min_x, float max_x) {
 
                 return max(min(x, max_x), min_x);
             }
-            __device__ float16 round(float16 x) {
-                return (int)x + (int)(2 * (x - (int)x));
-            }
-            __device__ int get_x_idx(float16 x, float16 center) {
+            __device__ int get_x_idx(float x, float center) {
                 const float resolution = ${resolution};
                 const float width = ${width};
                 int i = (x - center) / resolution + 0.5 * width;
                 return i;
             }
-            __device__ int get_y_idx(float16 y, float16 center) {
+            __device__ int get_y_idx(float y, float center) {
                 const float resolution = ${resolution};
                 const float height = ${height};
                 int i = (y - center) / resolution + 0.5 * height;
                 return i;
             }
-            __device__ int get_idx(float16 x, float16 y, float16 center_x, float16 center_y) {
+            __device__ int get_idx(float x, float y, float center_x, float center_y) {
                 int idx_x = clamp(get_x_idx(x, center_x), 0, ${width} - 1);
                 int idx_y = clamp(get_y_idx(y, center_y), 0, ${height} - 1);
                 return ${width} * idx_x + idx_y;

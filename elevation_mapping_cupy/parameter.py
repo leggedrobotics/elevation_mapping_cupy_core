@@ -2,12 +2,12 @@
 # Copyright (c) 2022, Takahiro Miki. All rights reserved.
 # Licensed under the MIT license. See LICENSE file in the project root for details.
 #
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 import pickle
 import numpy as np
 from simple_parsing.helpers import Serializable
 from dataclasses import field
-from typing import Tuple
+from typing import Tuple, get_type_hints
 
 
 @dataclass
@@ -76,6 +76,9 @@ class Parameter(Serializable):
                                (Default: ``1.0``)
         ramped_height_range_c: If z > max(d - ramped_height_range_b, 0) * ramped_height_range_a + ramped_height_range_c, reject.  
                                (Default: ``0.2``)
+        ramped_height_range_from_sensor: Measure d in the ramped height range as the horizontal distance from the sensor.  
+                                         If False, d is the horizontal distance from the map frame origin (legacy behaviour).  
+                                         (Default: ``False``)
         safe_thresh: If traversability is smaller, it is counted as unsafe cell.  
                      (Default: ``0.5``)
         safe_min_thresh: Polygon is unsafe if there exists lower traversability than this.  
@@ -183,6 +186,7 @@ class Parameter(Serializable):
     ramped_height_range_a: float = 0.3  # if z > max(d - ramped_height_range_b, 0) * ramped_height_range_a + ramped_height_range_c, reject.
     ramped_height_range_b: float = 1.0  # if z > max(d - ramped_height_range_b, 0) * ramped_height_range_a + ramped_height_range_c, reject.
     ramped_height_range_c: float = 0.2  # if z > max(d - ramped_height_range_b, 0) * ramped_height_range_a + ramped_height_range_c, reject.
+    ramped_height_range_from_sensor: bool = False  # d is the horizontal distance from the sensor; False (legacy) measures it from the map frame origin.
 
     safe_thresh: float = 0.5  # if traversability is smaller, it is counted as unsafe cell.
     safe_min_thresh: float = 0.5  # polygon is unsafe if there exists lower traversability than this.
@@ -245,7 +249,10 @@ class Parameter(Serializable):
         Returns:
             list: A list of parameter names.
         """
-        return list(self.__annotations__.keys())
+        # dataclasses.fields() rather than self.__annotations__: since Python 3.14
+        # (PEP 649) annotations are created lazily and the instance lookup falls
+        # through to a base class's (simple_parsing SerializableMixin) annotations.
+        return [f.name for f in fields(self)]
 
     def get_types(self):
         """
@@ -254,7 +261,8 @@ class Parameter(Serializable):
         Returns:
             list: A list of parameter types.
         """
-        return [v.__name__ for v in self.__annotations__.values()]
+        hints = get_type_hints(type(self))
+        return [getattr(hints[f.name], "__name__", str(hints[f.name])) for f in fields(self)]
 
     def set_value(self, name, value):
         """
