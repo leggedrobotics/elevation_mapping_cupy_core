@@ -39,6 +39,27 @@ em.input(points, R, t, position_noise, orientation_noise)
 elevation = em.get_map_with_name("elevation")
 ```
 
+## Development and simulation testing
+
+A [pixi](https://pixi.sh) environment pins the full toolchain (CUDA 13, CuPy,
+MuJoCo 4, CUDA-enabled PyTorch, pytest) for x86 and Jetson Orin/Thor — no
+`sudo`, nothing beyond an NVIDIA driver (see [sim/README.md](sim/README.md)):
+
+```bash
+pixi run test-all
+```
+
+`sim/` holds a MuJoCo test bench that drives `ElevationMap` over procedural
+terrain with a ray-cast depth camera and scores the result against a top-down
+ray-cast ground-truth height map:
+
+```bash
+pixi run sim --all --out sim/report
+```
+
+See [sim/README.md](sim/README.md) for the scene catalogue, how ground truth is
+aligned to the map grid, and what each test covers.
+
 ## License
 
 MIT — Copyright (c) 2022 ETH Zurich, Takahiro Miki. See [LICENSE](LICENSE).
