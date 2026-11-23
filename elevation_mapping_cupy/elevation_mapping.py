@@ -186,6 +186,10 @@ class ElevationMap:
             if param.weight_file and param.weight_file.strip():
                 print(f"[ElevationMap] Weight file not found: {param.weight_file}")
             # Weight file is empty or not set - traversability filter disabled (not needed for semantic-based traversability)
+        # Value for traversability cells that clear() and shifts reset; 0.0 keeps the old behaviour.
+        self.traversability_fill = (
+            1.0 if param.keep_traversability_without_filter and self.traversability_filter is None else 0.0
+        )
         
         self.untraversable_polygon = xp.zeros((1, 2))
 
@@ -201,6 +205,8 @@ class ElevationMap:
             self.elevation_map *= 0.0
             # Initial variance
             self.elevation_map[1] += self.initial_variance
+            if self.traversability_fill:
+                self.elevation_map[3] += self.traversability_fill
             self.semantic_map.clear()
 
         self.mean_error = 0.0
@@ -304,6 +310,8 @@ class ElevationMap:
             self.elevation_map = cp.roll(self.elevation_map, shift_value, axis=(1, 2))
             self.pad_value(self.elevation_map, shift_value, value=0.0)
             self.pad_value(self.elevation_map, shift_value, idx=1, value=self.initial_variance)
+            if self.traversability_fill:
+                self.pad_value(self.elevation_map, shift_value, idx=3, value=self.traversability_fill)
             # Plugin layers are computed on-demand; invalidate cache when shifting.
             self.plugin_manager.reset_layers()
             self.semantic_map.shift_map_xy(shift_value)

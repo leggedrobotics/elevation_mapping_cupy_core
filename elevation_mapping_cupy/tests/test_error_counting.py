@@ -44,6 +44,47 @@ def test_error_sums_match_the_matched_points(n):
     assert float(new_map[4].sum()) == n
 
 
+@pytest.mark.parametrize(
+    "weight_file, keep, fill",
+    [("", False, 0.0), ("", True, 1.0), (str(_PLUGINS.parent / "weights.dat"), True, 0.0)],
+    ids=["no-filter", "no-filter-keep", "filter-keep"],
+)
+def test_traversability_after_shift_and_clear(weight_file, keep, fill):
+    # Without a filter nothing rewrites the traversability layer, so cells reset to 0
+    # by a shift or clear() never pass traversability_inlier and drift compensation
+    # stops. keep_traversability_without_filter resets them to 1.0 instead.
+    p = parameter.Parameter(use_chainer=False, map_length=4.0, resolution=0.04, plugin_config_file=str(_PLUGINS),
+                            weight_file=weight_file, keep_traversability_without_filter=keep,
+                            mahalanobis_thresh=2.0, drift_compensation_variance_inlier=0.05, traversability_inlier=0.1)
+    p.update()
+    em = elevation_mapping.ElevationMap(p)
+    assert (em.traversability_filter is None) == (weight_file == "")
+
+    em.shift_map_xy(cp.array([10, -7]))
+    trav = cp.asnumpy(em.elevation_map[3])
+    assert (trav[:10] == fill).all() and (trav[:, -7:] == fill).all()
+    assert (trav[10:, :-7] == 1.0).all()
+
+    em.clear()
+    assert (cp.asnumpy(em.elevation_map[3]) == fill).all()
+    if weight_file:
+        return
+
+    # A flat, valid, confident map after clear(): the drift inlier count follows the fill.
+    em.elevation_map[0] = 0.0
+    em.elevation_map[1] = 0.01
+    em.elevation_map[2] = 1.0
+    sensor = np.float32([0.0, 0.0, 0.5])
+    a = np.linspace(0, 2 * np.pi, 256, endpoint=False)
+    world = np.stack([np.cos(a), np.sin(a), np.zeros_like(a)], 1)
+    points = cp.asarray((world - sensor).astype(np.float32))
+    error, error_cnt = cp.zeros(1, cp.float32), cp.zeros(1, cp.float32)
+    zero = cp.zeros(1, cp.float32)
+    em.error_counting_kernel(em.elevation_map, points, zero, zero, cp.eye(3, dtype=cp.float32),
+                             cp.asarray(sensor), cp.zeros_like(em.new_map), error, error_cnt, size=len(a))
+    assert float(error_cnt[0]) == (len(a) if keep else 0)
+
+
 def test_per_cell_counts_match_one_point_per_launch():
     p = parameter.Parameter(use_chainer=False, map_length=4.0, resolution=0.04, plugin_config_file=str(_PLUGINS),
                             mahalanobis_thresh=2.0, drift_compensation_variance_inlier=0.05, traversability_inlier=0.1)

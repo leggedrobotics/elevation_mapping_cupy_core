@@ -109,6 +109,8 @@ class Parameter(Serializable):
                               (Default: ``0.1``)
         orientation_noise_thresh: If the orientation change is bigger than this value, the drift compensation happens.  
                                   (Default: ``0.1``)
+        keep_traversability_without_filter: Without a traversability filter, keep the traversability layer at 1.0 after clear() and in cells shifted into the map, as at start-up. Otherwise those cells read 0 and never count as drift compensation inliers. The traversability layer is then a constant 1.0, not an estimate.  
+                                            (Default: ``False``)
         plugin_config_file: Configuration file for the plugin.  
                             (Default: ``"config/plugin_config.yaml"``)
         weight_file: Weight file for traversability filter.  
@@ -206,6 +208,7 @@ class Parameter(Serializable):
     use_chainer: bool = True  # use chainer as a backend of traversability filter or pytorch. If false, it uses pytorch. pytorch requires ~2GB more GPU memory compared to chainer but runs faster.
     position_noise_thresh: float = 0.1  # if the position change is bigger than this value, the drift compensation happens.
     orientation_noise_thresh: float = 0.1  # if the orientation change is bigger than this value, the drift compensation happens.
+    keep_traversability_without_filter: bool = False  # without a traversability filter, keep traversability at 1.0 after clear() and map shifts, so drift compensation keeps finding inliers.
     confidence_fusion_threshold: float = 0.5  # only fuse pixels with confidence >= this value (0.0-1.0). 0.0 disables filtering. Used by image_exponential fusion and as the _sem_observed trust gate.
 
     # image_confidence_weighted fusion (per-cell evidence weight):
