@@ -56,8 +56,9 @@ def test_per_cell_counts_match_one_point_per_launch():
     rng = np.random.default_rng(0)
     # Runs of points in the same cell, as in scan or pixel order, so warps hold
     # groups of every size; every third point is off the surface (layer 4 only).
-    r = np.repeat(rng.uniform(0.8, 1.5, 600), rng.integers(1, 15, 600))[:4000]
-    a = np.repeat(rng.uniform(0, 2 * np.pi, 600), rng.integers(1, 15, 600))[:len(r)]
+    runs = rng.integers(1, 15, 600)
+    r = np.repeat(rng.uniform(0.8, 1.5, 600), runs)
+    a = np.repeat(rng.uniform(0, 2 * np.pi, 600), runs)
     world = np.stack([r * np.cos(a), r * np.sin(a), rng.uniform(-0.01, 0.01, len(r))], 1)
     world[::3, 2] = 0.3
     sensor = np.float32([0.0, 0.0, 0.5])
