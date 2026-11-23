@@ -66,6 +66,38 @@ def map_utils(
             const int layer = ${width} * ${height};
             return layer * layer_n + idx;
         }
+        // Sums a, b and c over the lanes of this warp that share key. Returns true on
+        // the group's lowest lane, which then holds the sums; the others return false.
+        // Neighbouring points (scan or pixel order) mostly share a map cell, and
+        // same-address atomics serialise, so callers add each group's sum once.
+        // Pointer jumping along the group's lanes: log2(group size) rounds. Before
+        // sm_70 (no __match_any_sync) every lane is its own group.
+        template <typename V>
+        __device__ bool sum_over_key(int key, V& a, V& b, V& c) {
+#if __CUDA_ARCH__ >= 700
+            const unsigned mask = __activemask();
+            const unsigned peers = __match_any_sync(mask, key);
+            const int lane = threadIdx.x & 31;
+            const unsigned above = lane == 31 ? 0u : peers & (0xffffffffu << (lane + 1));
+            int next = above ? __ffs(above) - 1 : -1;
+            while (__any_sync(mask, next >= 0)) {
+                const int src = next >= 0 ? next : lane;
+                V na = __shfl_sync(mask, a, src);
+                V nb = __shfl_sync(mask, b, src);
+                V nc = __shfl_sync(mask, c, src);
+                int nn = __shfl_sync(mask, next, src);
+                if (next >= 0) {
+                    a += na;
+                    b += nb;
+                    c += nc;
+                    next = nn;
+                }
+            }
+            return (peers & ((1u << lane) - 1u)) == 0;
+#else
+            return true;
+#endif
+        }
         __device__ float transform_p(float x, float y, float z,
                                      float r0, float r1, float r2, float t) {
             return r0 * x + r1 * y + r2 * z + t;
@@ -225,35 +257,10 @@ def add_points_kernel(
                     }
                 }
             }
-#if __CUDA_ARCH__ >= 700
-            // Neighbouring points (scan or pixel order) mostly share a cell, and
-            // same-address atomics serialise. Lanes of a warp with the same cell sum
-            // their contributions first (pointer jumping along the lanes of each
-            // group, log2(group size) rounds) and the group's lowest lane adds once.
-            {
-                const unsigned mask = __activemask();
-                const unsigned peers = __match_any_sync(mask, key);
-                const int lane = threadIdx.x & 31;
-                const unsigned above = lane == 31 ? 0u : peers & (0xffffffffu << (lane + 1));
-                int next = above ? __ffs(above) - 1 : -1;
-                while (__any_sync(mask, next >= 0)) {
-                    const int src = next >= 0 ? next : lane;
-                    T h = __shfl_sync(mask, add_h, src);
-                    T vv = __shfl_sync(mask, add_v, src);
-                    T n = __shfl_sync(mask, add_n, src);
-                    int nn = __shfl_sync(mask, next, src);
-                    if (next >= 0) {
-                        add_h += h;
-                        add_v += vv;
-                        add_n += n;
-                        next = nn;
-                    }
-                }
-                if ((peers & ((1u << lane) - 1u)) != 0) {
-                    key = -1;  // not the group's lowest lane
-                }
+            // Same-cell points of this warp add once (see sum_over_key).
+            if (!sum_over_key(key, add_h, add_v, add_n)) {
+                key = -1;
             }
-#endif
             if (key >= 0) {
                 atomicAdd(&newmap[get_map_idx(key, 0)], add_h);
                 atomicAdd(&newmap[get_map_idx(key, 1)], add_v);
@@ -390,7 +397,8 @@ def error_counting_kernel(
             U z = transform_p(rx, ry, rz, R[6], R[7], R[8], t[2]);
             T e = 0;
             T cnt = 0;
-            // No early return: the scalar sums below are shared by the whole warp.
+            int key = -1;
+            // No early return: the sums below are shared by the whole warp.
             if (is_valid(x, y, z, t[0], t[1], t[2])) {
                 int idx = get_idx(x, y, center_x[0], center_y[0]);
                 if (is_inside(idx)) {
@@ -403,9 +411,19 @@ def error_counting_kernel(
                         && map_t > ${traversability_inlier}) {
                         e = z - map_h;
                         cnt = 1;
-                        atomicAdd(&newmap[get_map_idx(idx, 3)], 1.0);
                     }
-                    atomicAdd(&newmap[get_map_idx(idx, 4)], 1.0);
+                    key = idx;
+                }
+            }
+            // Per-cell counts (new_map layers 3 and 4), added once per cell and warp.
+            // Whole numbers, so the sums are exact in any order.
+            {
+                T inliers = cnt, points = key >= 0 ? 1 : 0, unused = 0;
+                if (sum_over_key(key, inliers, points, unused) && key >= 0) {
+                    if (inliers > 0) {
+                        atomicAdd(&newmap[get_map_idx(key, 3)], inliers);
+                    }
+                    atomicAdd(&newmap[get_map_idx(key, 4)], points);
                 }
             }
             // Every point adding into the same two scalars serialises the atomics
