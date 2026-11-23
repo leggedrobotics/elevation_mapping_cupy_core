@@ -1,4 +1,6 @@
 """Visibility cleanup: rays from the sensor to a point lower the validity of older cells they pass under."""
+from pathlib import Path
+
 import cupy as cp
 import numpy as np
 import pytest
@@ -6,6 +8,7 @@ import pytest
 from elevation_mapping_cupy import elevation_mapping, parameter
 
 SENSOR = (0.0, 0.0, 0.5)
+_PLUGINS = Path(__file__).parent.parent / "configs" / "plugin_config.yaml"
 
 
 @pytest.fixture
@@ -13,7 +16,8 @@ def elmap():
     # cleanup_cos_thresh 0 disables the normal check, so the test does not depend on
     # the normals of a narrow pillar.
     p = parameter.Parameter(use_chainer=False, map_length=8.0, resolution=0.04, max_ray_length=10.0,
-                            cleanup_cos_thresh=0.0, enable_visibility_cleanup=True)
+                            cleanup_cos_thresh=0.0, enable_visibility_cleanup=True,
+                            plugin_config_file=str(_PLUGINS))
     p.update()
     em = elevation_mapping.ElevationMap(p)
     # A 0.4 m pillar 1.1 m in front of the sensor, then aged so the cleanup may touch it.
