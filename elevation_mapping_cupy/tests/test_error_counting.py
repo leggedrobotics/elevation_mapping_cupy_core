@@ -12,7 +12,10 @@ _PLUGINS = Path(__file__).parent.parent / "configs" / "plugin_config.yaml"
 
 @pytest.mark.parametrize("n", [1, 31, 32, 1000, 20001])
 def test_error_sums_match_the_matched_points(n):
-    p = parameter.Parameter(use_chainer=False, map_length=4.0, resolution=0.04, plugin_config_file=str(_PLUGINS))
+    # The kernel also needs variance < drift_compensation_variance_inlier / 2 and
+    # traversability > traversability_inlier; the map below satisfies both.
+    p = parameter.Parameter(use_chainer=False, map_length=4.0, resolution=0.04, plugin_config_file=str(_PLUGINS),
+                            mahalanobis_thresh=2.0, drift_compensation_variance_inlier=0.05, traversability_inlier=0.1)
     p.update()
     em = elevation_mapping.ElevationMap(p)
     # A flat, valid, confident, traversable map at height 0.
@@ -34,6 +37,7 @@ def test_error_sums_match_the_matched_points(n):
     em.error_counting_kernel(em.elevation_map, points, zero, zero, cp.eye(3, dtype=cp.float32),
                              cp.asarray(sensor), new_map, error, error_cnt, size=n)
     matched = np.abs(world[:, 2]) < 0.01 * p.mahalanobis_thresh
+    assert matched.any() or n < 3
     assert float(error_cnt[0]) == matched.sum()
     np.testing.assert_allclose(float(error[0]), world[matched, 2].sum(), rtol=1e-4, atol=1e-4)
     assert float(new_map[3].sum()) == matched.sum()
