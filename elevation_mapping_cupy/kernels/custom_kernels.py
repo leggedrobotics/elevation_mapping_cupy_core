@@ -325,27 +325,43 @@ def error_counting_kernel(
             U x = transform_p(rx, ry, rz, R[0], R[1], R[2], t[0]);
             U y = transform_p(rx, ry, rz, R[3], R[4], R[5], t[1]);
             U z = transform_p(rx, ry, rz, R[6], R[7], R[8], t[2]);
-            U v = point_noise(rx, ry, rz);
-            // if (!is_valid(z, t[2])) {return;}
-            if (!is_valid(x, y, z, t[0], t[1], t[2])) {return;}
-            // if ((x - t[0]) * (x - t[0]) + (y - t[1]) * (y - t[1]) + (z - t[2]) * (z - t[2]) < 0.5) {return;}
-            int idx = get_idx(x, y, center_x[0], center_y[0]);
-            if (!is_inside(idx)) {
-                return;
+            T e = 0;
+            T cnt = 0;
+            // No early return: the scalar sums below are shared by the whole warp.
+            if (is_valid(x, y, z, t[0], t[1], t[2])) {
+                int idx = get_idx(x, y, center_x[0], center_y[0]);
+                if (is_inside(idx)) {
+                    U map_h = map[get_map_idx(idx, 0)];
+                    U map_v = map[get_map_idx(idx, 1)];
+                    U map_valid = map[get_map_idx(idx, 2)];
+                    U map_t = map[get_map_idx(idx, 3)];
+                    if (map_valid > 0.5 && (abs(map_h - z) < (map_v * ${mahalanobis_thresh}))
+                        && map_v < ${outlier_variance} / 2.0
+                        && map_t > ${traversability_inlier}) {
+                        e = z - map_h;
+                        cnt = 1;
+                        atomicAdd(&newmap[get_map_idx(idx, 3)], 1.0);
+                    }
+                    atomicAdd(&newmap[get_map_idx(idx, 4)], 1.0);
+                }
             }
-            U map_h = map[get_map_idx(idx, 0)];
-            U map_v = map[get_map_idx(idx, 1)];
-            U map_valid = map[get_map_idx(idx, 2)];
-            U map_t = map[get_map_idx(idx, 3)];
-            if (map_valid > 0.5 && (abs(map_h - z) < (map_v * ${mahalanobis_thresh}))
-                && map_v < ${outlier_variance} / 2.0
-                && map_t > ${traversability_inlier}) {
-                T e = z - map_h;
+            // Every point adding into the same two scalars serialises the atomics
+            // (15 ms for 19k points on a Jetson Thor), so a full warp sums its lanes
+            // first and adds once. Partial warps keep one atomic per point.
+            unsigned mask = __activemask();
+            if (mask == 0xffffffffu) {
+                for (int o = 16; o > 0; o >>= 1) {
+                    e += __shfl_xor_sync(mask, e, o);
+                    cnt += __shfl_xor_sync(mask, cnt, o);
+                }
+                if ((threadIdx.x & 31) != 0) {
+                    cnt = 0;
+                }
+            }
+            if (cnt > 0) {
                 atomicAdd(&error[0], e);
-                atomicAdd(&error_cnt[0], 1);
-                atomicAdd(&newmap[get_map_idx(idx, 3)], 1.0);
+                atomicAdd(&error_cnt[0], cnt);
             }
-            atomicAdd(&newmap[get_map_idx(idx, 4)], 1.0);
             """
         ).substitute(
             mahalanobis_thresh=mahalanobis_thresh,
