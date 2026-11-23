@@ -16,6 +16,7 @@ def map_utils(
     ramped_height_range_a,
     ramped_height_range_b,
     ramped_height_range_c,
+    ramped_height_range_from_sensor=False,
 ):
     util_preamble = string.Template(
         """
@@ -71,7 +72,10 @@ def map_utils(
         __device__ bool is_valid(float x, float y, float z,
                                float sx, float sy, float sz) {
             float d = point_sensor_distance(x, y, z, sx, sy, sz);
-            float dxy = max(sqrt(x * x + y * y) - ${ramped_height_range_b}, 0.0);
+            // Legacy measures the ramp distance from the map origin.
+            float hx = ${ramp_dx};
+            float hy = ${ramp_dy};
+            float dxy = max(sqrt(hx * hx + hy * hy) - ${ramped_height_range_b}, 0.0);
             if (d < ${min_valid_distance} * ${min_valid_distance}) {
                 return false;
             }
@@ -121,6 +125,8 @@ def map_utils(
         ramped_height_range_a=ramped_height_range_a,
         ramped_height_range_b=ramped_height_range_b,
         ramped_height_range_c=ramped_height_range_c,
+        ramp_dx="x - sx" if ramped_height_range_from_sensor else "x",
+        ramp_dy="y - sy" if ramped_height_range_from_sensor else "y",
     )
     return util_preamble
 
@@ -143,6 +149,7 @@ def add_points_kernel(
     ramped_height_range_c,
     enable_edge_shaped=True,
     enable_visibility_cleanup=True,
+    ramped_height_range_from_sensor=False,
 ):
     add_points_kernel = cp.ElementwiseKernel(
         in_params="raw U center_x, raw U center_y, raw U R, raw U t, raw U norm_map",
@@ -157,6 +164,7 @@ def add_points_kernel(
             ramped_height_range_a,
             ramped_height_range_b,
             ramped_height_range_c,
+            ramped_height_range_from_sensor,
         ),
         operation=string.Template(
             """
@@ -302,6 +310,7 @@ def error_counting_kernel(
     ramped_height_range_a,
     ramped_height_range_b,
     ramped_height_range_c,
+    ramped_height_range_from_sensor=False,
 ):
     error_counting_kernel = cp.ElementwiseKernel(
         in_params="raw U map, raw U p, raw U center_x, raw U center_y, raw U R, raw U t",
@@ -316,6 +325,7 @@ def error_counting_kernel(
             ramped_height_range_a,
             ramped_height_range_b,
             ramped_height_range_c,
+            ramped_height_range_from_sensor,
         ),
         operation=string.Template(
             """
