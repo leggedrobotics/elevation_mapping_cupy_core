@@ -238,7 +238,7 @@ def make_trajectory(cfg: RunConfig, scene: scenes.Scene) -> List[BasePose]:
 
     xs = xs - sway * np.sin(yaws)  # +y_body is left
     ys = ys + sway * np.cos(yaws)
-    zs = scene.analytic_height(xs, ys) + cfg.base_height + bob
+    zs = scene.walk_height(xs, ys) + cfg.base_height + bob
 
     return [
         BasePose(

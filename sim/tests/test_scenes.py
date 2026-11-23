@@ -87,3 +87,22 @@ def test_boxes_scene_is_deterministic_and_leaves_origin_clear():
     assert [x.pos for x in a.boxes] == [x.pos for x in b.boxes]
     assert [x.pos for x in scenes.boxes(n=8, seed=2).boxes] != [x.pos for x in a.boxes]
     assert a.analytic_height(np.array(0.0), np.array(0.0)) == pytest.approx(0.0)
+
+
+def test_stones_have_tops_and_gaps():
+    scene = scenes.stones(n_x=3, n_y=1, top=0.3, half=0.1, pitch=0.4, jitter_z=0.0, jitter_xy=0.0, x0=1.0)
+    for i in range(3):
+        assert scene.analytic_height(np.array(1.0 + 0.4 * i), np.array(0.0)) == pytest.approx(0.3)
+        assert scene.analytic_height(np.array(1.2 + 0.4 * i), np.array(0.0)) == pytest.approx(0.0)  # gap
+    assert scene.analytic_height(np.array(0.0), np.array(0.0)) == pytest.approx(0.3)  # start pad
+    assert scene.analytic_height(np.array(0.75), np.array(0.0)) == pytest.approx(0.0)  # pad-to-stone gap
+
+
+def test_robot_walks_level_over_stones():
+    from emsim.runner import RunConfig, make_trajectory
+
+    scene = scenes.stones()
+    poses = make_trajectory(RunConfig(scene="stones", trajectory="line", n_steps=30), scene)
+    z = np.array([p.position[2] for p in poses])
+    assert np.ptp(z) < 1e-9, "the base must not drop into the gaps"
+    assert z[0] == pytest.approx(scene.walk_z + 0.8)

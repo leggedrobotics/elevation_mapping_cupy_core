@@ -119,6 +119,15 @@ class Scene:
     hfield: Optional[HField] = None
     ground_z: float = 0.0
     bounds: Tuple[float, float, float, float] = (-6.0, 6.0, -6.0, 6.0)
+    # Terrain height the robot walks at, if not the surface under its base: on
+    # stepping stones the body stays level instead of dropping into every gap.
+    walk_z: Optional[float] = None
+
+    def walk_height(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """Terrain height the base is carried above at ``(x, y)``."""
+        if self.walk_z is None:
+            return self.analytic_height(x, y)
+        return np.full(np.broadcast(np.asarray(x), np.asarray(y)).shape, self.walk_z, dtype=np.float64)
 
     def analytic_height(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Terrain height at ``(x, y)``, broadcasting over arrays."""
@@ -294,6 +303,42 @@ def mixed() -> Scene:
     )
 
 
+def stones(
+    n_x: int = 8,
+    n_y: int = 5,
+    top: float = 0.3,
+    half: float = 0.11,
+    pitch: float = 0.42,
+    jitter_z: float = 0.06,
+    jitter_xy: float = 0.03,
+    x0: float = 0.9,
+    seed: int = 0,
+) -> Scene:
+    """Stepping stones over a pit, ahead of a start pad along +x.
+
+    Small footholds (``2 * half`` square) with deep gaps between them: thin
+    elevated features, many vertical faces and stones occluding each other's
+    sides. The robot walks level at ``top``.
+    """
+    rng = np.random.default_rng(seed)
+    pad = Box(pos=(0.0, 0.0, top / 2.0), size=(0.6, 0.6, top / 2.0), rgba=(0.6, 0.6, 0.65, 1.0))
+    out = [pad]
+    for i in range(n_x):
+        for j in range(n_y):
+            h = top + rng.uniform(-jitter_z, jitter_z)
+            dx, dy = rng.uniform(-jitter_xy, jitter_xy, size=2)
+            out.append(Box(pos=(x0 + i * pitch + dx, (j - (n_y - 1) / 2.0) * pitch + dy, h / 2.0),
+                           size=(half, half, h / 2.0), rgba=(0.62, 0.5, 0.42, 1.0)))
+    gap = pitch - 2.0 * half
+    return Scene(
+        name="stones",
+        description=f"{n_x}x{n_y} stepping stones ({2 * half:.2f} m tops, {gap:.2f} m gaps) "
+                    f"over a {top:.2f} m pit, after a start pad.",
+        boxes=out,
+        walk_z=top,
+    )
+
+
 SCENES: Dict[str, Callable[[], Scene]] = {
     "flat": flat,
     "steps": steps,
@@ -303,6 +348,7 @@ SCENES: Dict[str, Callable[[], Scene]] = {
     "slope": slope,
     "rough": rough,
     "mixed": mixed,
+    "stones": stones,
 }
 
 
