@@ -50,6 +50,8 @@ def test_error_sums_match_the_matched_points(n):
     ids=["no-filter", "no-filter-keep", "filter-keep"],
 )
 def test_traversability_after_shift_and_clear(weight_file, keep, fill):
+    if weight_file:
+        pytest.importorskip("torch")  # the filter case needs the filter to load
     # Without a filter nothing rewrites the traversability layer, so cells reset to 0
     # by a shift or clear() never pass traversability_inlier and drift compensation
     # stops. keep_traversability_without_filter resets them to 1.0 instead.
