@@ -108,6 +108,24 @@ error (map − truth, diverging colours). The figure's title carries coverage,
 rmse, mae, bias and p95. Writes `<scene>_<sensor>_<trajectory>_<map length>m_map_vs_truth.png`;
 about 15 s per figure on a desktop, since every cell is a box geom.
 
+### Stepping stones
+
+`stones`: a start pad, then 8 x 5 stones (22 cm square tops, 20 cm gaps, heights
+0.3 m +- 6 cm, positions +- 3 cm) over a pit. The scene sets `walk_z`, so the
+base walks level across it instead of following the pit.
+
+```bash
+pixi run render-map --scene stones --trajectory line --sensor camera
+```
+
+Walking across with a depth camera (4 cm cells), stone tops come out exact
+(p95 0.02 cm) and 80 % of the pit is observed (53 % with a VLP-32, whose grazing
+rays are blocked by neighbouring stones). Pit cells next to a stone read stone
+height, so a gap looks up to one cell narrower on each side; almost all of those
+cells straddle the edge, so this is the cell size, not leakage. 2 cm cells halve
+it at the cost of pit coverage, and `enable_edge_sharpen` makes no difference.
+`test_stepping_stones_walk` pins this down.
+
 Getting this working headless on a Jetson takes some setup, which is why it has
 its own module and pixi task:
 

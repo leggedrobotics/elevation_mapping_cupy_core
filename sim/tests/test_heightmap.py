@@ -25,7 +25,7 @@ SMOOTH_SCENES = ["flat", "slope", "rough"]
 # Scenes with vertical faces: cells straddling an edge legitimately disagree
 # with the analytic surface by up to the full step height, so those are scored
 # by percentile rather than maximum.
-STEPPED_SCENES = ["steps", "gap", "wall", "boxes", "mixed"]
+STEPPED_SCENES = ["steps", "gap", "wall", "boxes", "mixed", "stones"]
 
 
 @pytest.mark.parametrize("name", SMOOTH_SCENES)

@@ -32,6 +32,8 @@ SCENE_BUDGETS = {
     "steps": (0.030, 0.020, 0.85),
     "boxes": (0.040, 0.020, 0.85),
     "mixed": (0.030, 0.020, 0.85),
+    # Many small stones: lots of edge-straddling cells, hence the RMSE.
+    "stones": (0.070, 0.025, 0.80),
 }
 
 
@@ -179,3 +181,36 @@ def test_ground_truth_window_tracks_the_map_centre(sim_run):
     )
     shifted = compare_maps(est, shifted_gt, result.mask(RADIUS))
     assert aligned.rmse < shifted.rmse, "a deliberately misaligned ground truth must score worse"
+
+
+def test_stepping_stones_walk(sim_run, viz):
+    """Walking across the stones: tops exact, gaps observed, and stones grow into
+    the gaps by no more than the cells that straddle their edges."""
+    from emsim import scenes
+
+    cfg = RunConfig(scene="stones", trajectory="line", n_steps=40, resolution=0.04, map_length=8.0)
+    result = sim_run("line::stones", cfg)
+    viz("comparison", result, radius=RADIUS)
+    est, gt = result.layers["elevation"], result.ground_truth
+    x, y = result.cell_centers()
+    stones = scenes.make_scene("stones").boxes[1:]  # [0] is the start pad
+    # Distance of each cell centre outside the nearest stone footprint (negative inside).
+    dist = np.full(x.shape, np.inf)
+    for b in stones:
+        dx, dy = np.abs(x - b.pos[0]) - b.size[0], np.abs(y - b.pos[1]) - b.size[1]
+        dist = np.minimum(dist, np.hypot(np.maximum(dx, 0), np.maximum(dy, 0)) + np.minimum(np.maximum(dx, dy), 0))
+    # Score the stone field itself, plus a gap's width around it.
+    lo = np.min([[b.pos[0] - b.size[0], b.pos[1] - b.size[1]] for b in stones], axis=0) - 0.2
+    hi = np.max([[b.pos[0] + b.size[0], b.pos[1] + b.size[1]] for b in stones], axis=0) + 0.2
+    field = (x > lo[0]) & (x < hi[0]) & (y > lo[1]) & (y < hi[1])
+    seen = np.isfinite(est)
+    tops = field & seen & (dist < -cfg.resolution)
+    pit = field & (gt < 0.01)
+    top_err = np.abs(est - gt)[tops]
+    assert tops.sum() > 300 and np.percentile(top_err, 95) < 0.01, f"stone tops p95 {np.percentile(top_err, 95):.4f} m"
+    assert seen[pit].mean() > 0.6, f"only {seen[pit].mean():.0%} of the pit between stones observed"
+    grown = pit & seen & (est > 0.1)
+    # A cell whose centre is within half a cell of an edge overlaps the stone; allow
+    # 1 cm more for the stones' position jitter putting edges on cell boundaries.
+    assert np.all(dist[grown] <= cfg.resolution / 2 + 0.01), (
+        f"stone height {dist[grown].max() * 100:.1f} cm out into a gap")
