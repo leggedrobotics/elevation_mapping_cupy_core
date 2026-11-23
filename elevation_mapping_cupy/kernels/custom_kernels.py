@@ -27,9 +27,10 @@ def map_utils(
         // Cell index of a coordinate: (a / resolution + n / 2) in double, truncated.
         // Double arithmetic is slow on most GPUs (1/64 rate on a Jetson), and the ray
         // march evaluates this at every step. The float estimate is within
-        // 2e-7 * (|f| + n / 2) of the double value, so unless it lies that close to a
-        // cell boundary both truncate to the same cell; only then is the double
-        // expression evaluated. The result is the double expression's, always.
+        // 2.4e-7 * (|f| + n / 2) of the double value (three roundings of 2^-24), so
+        // unless it lies within 1e-6 * (|f| + n / 2) of a cell boundary (a 4x margin)
+        // both truncate to the same cell; only then is the double expression
+        // evaluated. The result is the double expression's, always.
         __device__ int cell_index(float a, int n) {
             const float half_n = 0.5f * n;
             float f = a * (float)(1.0 / ${resolution}) + half_n;
